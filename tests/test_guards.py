@@ -1,8 +1,10 @@
 """Self-tests for the repo guards: each still catches what it claims to."""
 
+import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -96,3 +98,24 @@ def test_security_paths_match_what_they_claim(repo):
         [str(SCRIPTS / "security-paths.sh")], cwd=ROOT, input=changed, capture_output=True, text=True, check=True
     )
     assert result.stdout.split() == ["pipeline/server.py", "deploy/gvisor/firewall.sh", ".github/workflows/ci.yml"]
+
+
+GUARD = ROOT / ".claude" / "hooks" / "gh_body_guard.py"
+
+
+@pytest.mark.parametrize(
+    ("command", "blocked"),
+    [
+        ('gh pr create --title "x" --body "Adds tests.\n\n— skillator · Author"', False),
+        ('gh pr comment 3 --body "Thanks @reviewbot, folded.\n\n— skillator · Author"', True),
+        ('gh issue create --title "x" --body "No signature here"', True),
+        ('gh pr review 3 --comment --body "Uses `@types/node`, fine.\n\n— peer · Reviewer"', False),
+        ('gh pr review 3 --comment --body "mail me at a@b.org\n\n— peer · Reviewer"', False),
+        ("gh pr list", False),
+        ("git commit -m 'docs: @someone'", False),
+    ],
+)
+def test_gh_body_guard(command, blocked):
+    payload = json.dumps({"tool_input": {"command": command}})
+    result = subprocess.run([sys.executable, "-I", str(GUARD)], input=payload, capture_output=True, text=True)
+    assert (result.returncode == 2) == blocked, result.stderr
