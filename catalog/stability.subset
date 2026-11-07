@@ -1,0 +1,6 @@
+anthropics/skills	skills/pdf
+openai/skills	skills/.curated/netlify-deploy
+obra/superpowers	skills/systematic-debugging
+anthropics/skills	skills/docx
+huggingface/skills	skills/huggingface-llm-trainer
+openai/skills	skills/.curated/cloudflare-deploy

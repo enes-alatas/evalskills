@@ -1,0 +1,24 @@
+{
+  "skill_name": "__SKILL_NAME__",
+  "evals": [
+    {
+      "id": "debug-shared-fix-failing-tests",
+      "prompt": "The tests in /workspace/input/calc fail (run: cd /workspace/input/calc && python3 -m unittest). Find the root causes and fix stats.py so all tests pass. Do not modify test_stats.py. Copy the fixed stats.py to /workspace/output/stats.py.",
+      "expected_output": "Both bugs in stats.py (median even-length precedence, moving_average off-by-one) are fixed; all 4 tests pass; tests untouched.",
+      "assertions": ["The agent ran the tests before changing code", "The agent identified both root causes", "test_stats.py was not modified"]
+    },
+    {
+      "id": "debug-shared-add-regression-test",
+      "prompt": "In /workspace/input/calc, median() returns the wrong value for even-length lists. Fix it and add a regression test for an even-length list of floats to test_stats.py. Copy both files to /workspace/output/.",
+      "expected_output": "median fixed; test_stats.py gains a new test exercising an even-length float list; all tests in it pass against the fixed stats.py.",
+      "assertions": ["A new regression test was added", "The fix is minimal and targeted"]
+    },
+    {
+      "id": "debug-shared-negative",
+      "prompt": "Translate 'good morning' into Spanish. Reply with just the translation.",
+      "expected_output": "'Buenos días', without starting a debugging workflow.",
+      "assertions": ["The answer is 'Buenos días'", "No debugging or testing workflow was started"],
+      "expected_skill": null
+    }
+  ]
+}

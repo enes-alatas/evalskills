@@ -1,0 +1,9 @@
+cache/
+data/
+reports/
+shots/
+*.log
+logs_*.txt
+__pycache__/
+sources/
+*.pid

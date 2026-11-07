@@ -1,0 +1,30 @@
+{
+  "skill_name": "__SKILL_NAME__",
+  "evals": [
+    {
+      "id": "pdf-shared-extract-total",
+      "prompt": "There is an invoice at /workspace/input/invoice.pdf. Extract the invoice number, the total due (amount and currency) and the bill-to company, and write them as JSON with keys invoice_number, total_due, currency, bill_to to /workspace/output/invoice.json.",
+      "expected_output": "/workspace/output/invoice.json contains {\"invoice_number\": \"INV-20417\", \"total_due\": 1098.60, \"currency\": \"EUR\", \"bill_to\": \"Northwind Labs\"}.",
+      "assertions": ["The agent read the PDF text rather than guessing", "invoice.json has the four requested keys with correct values"]
+    },
+    {
+      "id": "pdf-shared-merge",
+      "prompt": "Merge /workspace/input/report-a.pdf followed by /workspace/input/report-b.pdf into a single PDF at /workspace/output/merged.pdf, preserving page order.",
+      "expected_output": "/workspace/output/merged.pdf is a valid 3-page PDF: report A pages 1-2, then report B page 1.",
+      "assertions": ["merged.pdf exists and is a valid PDF", "Page order is A1, A2, B1"]
+    },
+    {
+      "id": "pdf-shared-create",
+      "prompt": "Create a one-page PDF at /workspace/output/memo.pdf whose text contains the title 'Release memo' and the sentence 'Version 2.4 ships on 14 November.'",
+      "expected_output": "/workspace/output/memo.pdf is a valid 1-page PDF whose extractable text contains both strings.",
+      "assertions": ["memo.pdf exists, is a valid PDF and has exactly one page", "Extracted text contains the title and the sentence"]
+    },
+    {
+      "id": "pdf-shared-negative",
+      "prompt": "What is 17 multiplied by 23? Reply with just the number.",
+      "expected_output": "391, without invoking PDF tooling.",
+      "assertions": ["The answer is 391", "The agent did not run PDF tooling for an unrelated request"],
+      "expected_skill": null
+    }
+  ]
+}

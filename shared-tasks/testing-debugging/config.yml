@@ -1,0 +1,3 @@
+schema_version: 1
+grading:
+  mode: default_plus_custom

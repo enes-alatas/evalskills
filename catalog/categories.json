@@ -1,0 +1,13 @@
+[
+ {"id": "documents", "label": "Documents"},
+ {"id": "frontend", "label": "Frontend & design"},
+ {"id": "code-review", "label": "Code review"},
+ {"id": "testing-debugging", "label": "Testing & debugging"},
+ {"id": "deployment", "label": "Deployment"},
+ {"id": "security", "label": "Security"},
+ {"id": "ml", "label": "ML & data"},
+ {"id": "github", "label": "GitHub workflow"},
+ {"id": "skill-authoring", "label": "Skill authoring"},
+ {"id": "mcp", "label": "MCP & integrations"},
+ {"id": "other", "label": "Other"}
+]
