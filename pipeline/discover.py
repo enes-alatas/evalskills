@@ -1,17 +1,19 @@
 """Discover skills (folders containing SKILL.md) in a public GitHub repository."""
+
 import json
 import re
 import subprocess
 import urllib.request
-from pathlib import Path
 
 from evaluate import CACHE, REPO_RE, checkout, git_env  # noqa: F401
 
 MAX_REPO_KB = 300_000  # refuse repos over ~300 MB
 MAX_SKILLS_LISTED = 200
 
-URL_RE = re.compile(r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?"
-                    r"(?:/tree/[^/]+/(.*))?/?$")
+URL_RE = re.compile(
+    r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?"
+    r"(?:/tree/[^/]+/(.*))?/?$"
+)
 
 
 class DiscoveryError(Exception):
@@ -30,8 +32,10 @@ def parse_repo_url(url: str) -> tuple[str, str | None]:
 
 
 def repo_meta(repo: str) -> dict:
-    req = urllib.request.Request(f"https://api.github.com/repos/{repo}",
-                                 headers={"Accept": "application/vnd.github+json", "User-Agent": "skill-inventory"})
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}",
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "skill-inventory"},
+    )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
@@ -83,8 +87,9 @@ def discover(url: str) -> dict:
         if sub and not (rel == sub.strip("/") or rel.startswith(sub.strip("/") + "/")):
             continue
         fm = frontmatter(p.read_text(errors="replace")[:20000])
-        skills.append({"path": rel, "name": fm.get("name") or p.parent.name,
-                       "description": (fm.get("description") or "")[:300]})
+        skills.append(
+            {"path": rel, "name": fm.get("name") or p.parent.name, "description": (fm.get("description") or "")[:300]}
+        )
         if len(skills) >= MAX_SKILLS_LISTED:
             break
     return {"repo": repo, "commit": commit, "default_branch": meta.get("default_branch"), "skills": skills}
@@ -92,4 +97,5 @@ def discover(url: str) -> dict:
 
 if __name__ == "__main__":
     import sys
+
     print(json.dumps(discover(sys.argv[1]), indent=1)[:3000])

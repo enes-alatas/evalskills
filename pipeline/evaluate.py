@@ -6,6 +6,7 @@ Every record stores: source repo, skill path, exact commit, evaluator version+co
 tiers run, agent/model (if any), scores, per-check statuses, duration, exit code,
 and the path to the full underlying reports.
 """
+
 import datetime as dt
 import functools
 import hashlib
@@ -30,11 +31,28 @@ UV = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
 TIER1_TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "600"))
 
 # Only these variables reach the evaluator subprocess; nothing else from our env leaks.
-ENV_ALLOW = {"PATH", "HOME", "LANG", "LC_ALL", "http_proxy", "https_proxy", "HTTP_PROXY",
-             "HTTPS_PROXY", "no_proxy", "NO_PROXY", "UV_CACHE_DIR", "XDG_CACHE_HOME"}
+ENV_ALLOW = {
+    "PATH",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "http_proxy",
+    "https_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "no_proxy",
+    "NO_PROXY",
+    "UV_CACHE_DIR",
+    "XDG_CACHE_HOME",
+}
 # Opt-in provider vars, passed only for LLM-backed tiers.
-PROVIDER_VARS = {"SKILL_EVAL_LLM_PROVIDER", "SKILL_EVAL_LLM_MODEL", "ANTHROPIC_API_KEY",
-                 "NVIDIA_API_KEY", "OPENAI_API_KEY"}
+PROVIDER_VARS = {
+    "SKILL_EVAL_LLM_PROVIDER",
+    "SKILL_EVAL_LLM_MODEL",
+    "ANTHROPIC_API_KEY",
+    "NVIDIA_API_KEY",
+    "OPENAI_API_KEY",
+}
 
 GIT_LOCK = threading.RLock()  # guards the shared clone cache
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -58,19 +76,33 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
     env = git_env()
     if not d.exists():
         d.parent.mkdir(parents=True, exist_ok=True)
-        sh(["git", "clone", "-q", "--depth", "1", "--no-tags", "-c", "core.symlinks=false",
-            f"https://github.com/{repo}.git", str(d)], env=env, timeout=300)
+        sh(
+            [
+                "git",
+                "clone",
+                "-q",
+                "--depth",
+                "1",
+                "--no-tags",
+                "-c",
+                "core.symlinks=false",
+                f"https://github.com/{repo}.git",
+                str(d),
+            ],
+            env=env,
+            timeout=300,
+        )
     else:
-        sh(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin",
-            ref or "HEAD"], env=env, timeout=300)
+        sh(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin", ref or "HEAD"], env=env, timeout=300)
         sh(["git", "-C", str(d), "reset", "-q", "--hard", "FETCH_HEAD"], env=env)
     return d, sh(["git", "-C", str(d), "rev-parse", "HEAD"])
 
 
 @functools.lru_cache(maxsize=1)
 def evaluator_version() -> dict:
-    ver = sh([UV, "run", "-q", "--python", "3.13", "skillevaluator", "--version"],
-             cwd=EVALUATOR_DIR, env=git_env()).split()[-1]
+    ver = sh(
+        [UV, "run", "-q", "--python", "3.13", "skillevaluator", "--version"], cwd=EVALUATOR_DIR, env=git_env()
+    ).split()[-1]
     commit = sh(["git", "-C", str(EVALUATOR_DIR), "rev-parse", "HEAD"])
     return {"version": ver, "commit": commit}
 
@@ -85,8 +117,14 @@ def tree_digest(skill_dir: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-SECURITY_CHECKS = ("Security Scan", "Secrets Detection", "Code Risk Analysis", "PII Scan",
-                   "Dependency Vulnerability Audit", "Unicode Smuggling Detection")
+SECURITY_CHECKS = (
+    "Security Scan",
+    "Secrets Detection",
+    "Code Risk Analysis",
+    "PII Scan",
+    "Dependency Vulnerability Audit",
+    "Unicode Smuggling Detection",
+)
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
@@ -108,13 +146,15 @@ def summarize_tier1(report: dict) -> dict:
                 sec_raw[sv if sv in sec_raw else "info"] += 1
                 key = (sv, finding_title(f))
                 sec_types[key] = sec_types.get(key, 0) + 1
-        checks.append({
-            "name": r.get("validator"),
-            "status": r.get("status"),
-            "incomplete": [str(x) for x in (r.get("incomplete_scans") or [])][:5],
-            "findings": len(fs),
-            "severity": {k: v for k, v in sev.items() if v},
-        })
+        checks.append(
+            {
+                "name": r.get("validator"),
+                "status": r.get("status"),
+                "incomplete": [str(x) for x in (r.get("incomplete_scans") or [])][:5],
+                "findings": len(fs),
+                "severity": {k: v for k, v in sev.items() if v},
+            }
+        )
     rank = {s: i for i, s in enumerate(SEVERITIES)}
     distinct = dict.fromkeys(SEVERITIES, 0)
     for (sv, _), _n in sec_types.items():
@@ -123,7 +163,8 @@ def summarize_tier1(report: dict) -> dict:
         "overall_status": report.get("overall_status"),
         "overall_passed": report.get("overall_passed"),
         "quality": {
-            "score": q.get("overall_score"), "grade": q.get("grade"),
+            "score": q.get("overall_score"),
+            "grade": q.get("grade"),
             "skill_type": q.get("skill_type"),
             "dimensions": {k: v.get("score") for k, v in (q.get("dimensions") or {}).items()},
         },
@@ -132,12 +173,18 @@ def summarize_tier1(report: dict) -> dict:
         "security": {
             "raw": sec_raw,
             "distinct": distinct,  # distinct (severity, finding type) pairs: 85 unpinned npx calls count once
-            "top": [{"severity": sv, "title": t, "count": n} for (sv, t), n in
-                    sorted(sec_types.items(), key=lambda kv: (rank.get(kv[0][0], 9), -kv[1]))[:10]],
+            "top": [
+                {"severity": sv, "title": t, "count": n}
+                for (sv, t), n in sorted(sec_types.items(), key=lambda kv: (rank.get(kv[0][0], 9), -kv[1]))[:10]
+            ],
         },
         "incomplete_scans": [str(x) for x in report.get("incomplete_scans") or []],
-        "scanner_errors": [str(e)[:200] for r in report.get("results", [])
-                           for e in (r.get("legacy") or {}).get("errors") or [] if "unexpected exit code" in str(e)],
+        "scanner_errors": [
+            str(e)[:200]
+            for r in report.get("results", [])
+            for e in (r.get("legacy") or {}).get("errors") or []
+            if "unexpected exit code" in str(e)
+        ],
         "checks": checks,
         "publication_status": report.get("publication_status"),
     }
@@ -161,27 +208,40 @@ def run_tier1(skill_dir: Path, out: Path, llm: bool) -> tuple[int, float, str]:
     cmd = [UV, "run", "-q", "--python", "3.13", "--extra", "security"]
     if llm:
         cmd += ["--extra", "llm"]
-    cmd += ["skillevaluator", "tier1", str(skill_dir), "--llm" if llm else "--no-llm",
-            "-r", "json", "-r", "html", "-r", "markdown", "-o", str(out)]
+    cmd += [
+        "skillevaluator",
+        "tier1",
+        str(skill_dir),
+        "--llm" if llm else "--no-llm",
+        "-r",
+        "json",
+        "-r",
+        "html",
+        "-r",
+        "markdown",
+        "-o",
+        str(out),
+    ]
     t0 = time.monotonic()
     try:
-        p = subprocess.run(cmd, cwd=EVALUATOR_DIR, env=env, capture_output=True, text=True,
-                           timeout=TIER1_TIMEOUT)
+        p = subprocess.run(cmd, cwd=EVALUATOR_DIR, env=env, capture_output=True, text=True, timeout=TIER1_TIMEOUT)
         code, log = p.returncode, p.stdout + "\n--- stderr ---\n" + p.stderr
     except subprocess.TimeoutExpired as e:
         code, log = -9, f"TIMEOUT after {TIER1_TIMEOUT}s\n{e.stdout or ''}"
     return code, round(time.monotonic() - t0, 1), log
 
 
-def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False,
-             force: bool = False) -> dict:
+def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, force: bool = False) -> dict:
     snap_root = Path(tempfile.mkdtemp(prefix="skill-snap-"))
     try:
         with GIT_LOCK:
             repo_dir, commit = checkout(repo)
             src = (repo_dir / skill_path).resolve()
-            if not (str(src) + "/").startswith(str(repo_dir.resolve()) + "/") and src != repo_dir.resolve() \
-                    or not (src / "SKILL.md").is_file():
+            if (
+                not (str(src) + "/").startswith(str(repo_dir.resolve()) + "/")
+                and src != repo_dir.resolve()
+                or not (src / "SKILL.md").is_file()
+            ):
                 raise ValueError(f"{repo}:{skill_path} has no SKILL.md at the current commit")
             # Snapshot only the skill folder (no symlinks, no .git) so the scan sees exactly what is recorded.
             skill_dir = snap_root / src.name
@@ -197,12 +257,17 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
     mode = "tier1-llm" if llm else "tier1-static"
     if not force:
         for prev in load_results():
-            if (prev["source"]["repo"], prev["source"]["skill_path"], prev["source"]["tree_digest"],
-                    prev["evaluator"]["commit"], prev["mode"]) == (repo, skill_path, digest, ev["commit"], mode):
+            if (
+                prev["source"]["repo"],
+                prev["source"]["skill_path"],
+                prev["source"]["tree_digest"],
+                prev["evaluator"]["commit"],
+                prev["mode"],
+            ) == (repo, skill_path, digest, ev["commit"], mode):
                 prev["_cached"] = True
                 return prev
     slug = f"{repo.replace('/', '__')}__{skill_path.strip('/').replace('/', '__')}"
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     out = REPORTS / slug / f"{commit[:12]}-{mode}-{stamp}"
     out.mkdir(parents=True, exist_ok=True)
     rep_path = out / "skillevaluator-tier1.json"
@@ -220,13 +285,22 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
         "skill_name": skill_dir.name,
         "category": category,
         "mode": mode,
-        "source": {"repo": repo, "url": f"https://github.com/{repo}", "skill_path": skill_path,
-                   "commit": commit, "tree_digest": digest,
-                   "tree_url": f"https://github.com/{repo}/tree/{commit}/{skill_path}"},
+        "source": {
+            "repo": repo,
+            "url": f"https://github.com/{repo}",
+            "skill_path": skill_path,
+            "commit": commit,
+            "tree_digest": digest,
+            "tree_url": f"https://github.com/{repo}/tree/{commit}/{skill_path}",
+        },
         "evaluator": ev,
-        "agent": None, "model": None,  # no live agent in Tier 1 static mode
-        "test_cases": None, "baseline": None,
-        "started_at": stamp, "duration_s": secs, "exit_code": code,
+        "agent": None,
+        "model": None,  # no live agent in Tier 1 static mode
+        "test_cases": None,
+        "baseline": None,
+        "started_at": stamp,
+        "duration_s": secs,
+        "exit_code": code,
         "cost_usd": 0.0 if not llm else None,
         "report_dir": str(out.relative_to(ROOT)),
         "attempts": attempts,
@@ -247,21 +321,33 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
 def sanitize_report(report: dict) -> dict:
     """Public copy of a report: drop matched source lines so scanner hits (possible credentials, PII)
     are never re-published. Findings keep file, line number, rule and severity."""
+
     def walk(o):
         if isinstance(o, dict):
-            return {k: ("[omitted]" if k in ("line_content", "match", "secret", "snippet", "evidence", "context")
-                        and isinstance(v, str) and v else walk(v)) for k, v in o.items()}
+            return {
+                k: (
+                    "[omitted]"
+                    if k in ("line_content", "match", "secret", "snippet", "evidence", "context")
+                    and isinstance(v, str)
+                    and v
+                    else walk(v)
+                )
+                for k, v in o.items()
+            }
         if isinstance(o, list):
             return [walk(x) for x in o]
         if isinstance(o, str):
             return o.replace(str(ROOT), "").replace(str(Path.home()), "~")
         return o
+
     pub = walk(report)
     for r in pub.get("results", []):
         for f in r.get("findings") or []:
             m = f.get("message")
-            if isinstance(m, str) and (r.get("validator") in ("PII Scan", "Secrets Detection")
-                                       or re.search(r"secret|credential|token|key|password|exfil", m.split(":")[0], re.I)):
+            if isinstance(m, str) and (
+                r.get("validator") in ("PII Scan", "Secrets Detection")
+                or re.search(r"secret|credential|token|key|password|exfil", m.split(":")[0], re.I)
+            ):
                 f["message"] = m.split(":")[0] + (": [matched text omitted]" if ":" in m else "")
     return pub
 
@@ -297,9 +383,20 @@ if __name__ == "__main__":
         print(resummarize(), "records updated")
         sys.exit(0)
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    r = evaluate(args[0], args[1], args[2] if len(args) > 2 else "",
-                 llm="--llm" in sys.argv, force="--force" in sys.argv)
+    r = evaluate(
+        args[0], args[1], args[2] if len(args) > 2 else "", llm="--llm" in sys.argv, force="--force" in sys.argv
+    )
     t1 = r.get("tier1") or {}
-    print(json.dumps({"id": r["id"], "status": r["status"], "secs": r["duration_s"],
-                      "exit": r["exit_code"], "quality": (t1.get("quality") or {}).get("score"),
-                      "overall": t1.get("overall_status"), "cached": r.get("_cached", False)}))
+    print(
+        json.dumps(
+            {
+                "id": r["id"],
+                "status": r["status"],
+                "secs": r["duration_s"],
+                "exit": r["exit_code"],
+                "quality": (t1.get("quality") or {}).get("score"),
+                "overall": t1.get("overall_status"),
+                "cached": r.get("_cached", False),
+            }
+        )
+    )
