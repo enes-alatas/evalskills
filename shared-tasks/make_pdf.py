@@ -10,7 +10,7 @@ def pdf(pages: list[str]) -> bytes:
         lines = text.split("\n")
         stream = (
             "BT /F1 12 Tf 72 720 Td 16 TL "
-            + " ".join("(" + l.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") + ") '" for l in lines)
+            + " ".join("(" + ln.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)") + ") '" for ln in lines)
             + " ET"
         )
         objs.append(f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream")
