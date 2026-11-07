@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Shared deterministic grader for testing-debugging (default_plus_custom). Stdlib only.
 Runs a hidden copy of the ORIGINAL tests plus extra hidden tests against the agent's stats.py."""
-import json, os, shutil, subprocess, tempfile
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 ENTRY = Path(os.environ.get("HARBOR_ENTRY_JSON", "/tests/entry.json"))
@@ -9,7 +14,7 @@ REWARD_JSON = Path(os.environ.get("HARBOR_REWARD_JSON", "/logs/verifier/reward.j
 REWARD_TXT = Path(os.environ.get("HARBOR_REWARD_TXT", "/logs/verifier/reward.txt"))
 OUT = Path(os.environ.get("GRADER_OUT", "/workspace/output"))
 
-HIDDEN = '''
+HIDDEN = """
 import unittest
 from stats import mean, median, moving_average
 class H(unittest.TestCase):
@@ -19,7 +24,7 @@ class H(unittest.TestCase):
     def test_median_even_floats(self): self.assertAlmostEqual(median([0.5, 2.5, 1.0, 9.0]), 1.75)
     def test_moving_average(self): self.assertEqual(moving_average([1, 2, 3, 4], 2), [1.5, 2.5, 3.5])
     def test_moving_average_full(self): self.assertEqual(moving_average([2, 4], 2), [3.0])
-'''
+"""
 
 
 def run_tests(stats: Path, test_src: str):
@@ -28,6 +33,7 @@ def run_tests(stats: Path, test_src: str):
     (d / "test_h.py").write_text(test_src)
     p = subprocess.run(["python3", "-m", "unittest", "-q", "test_h"], cwd=d, capture_output=True, text=True, timeout=60)
     import re
+
     m = re.search(r"Ran (\d+) test", p.stderr)
     ran = int(m.group(1)) if m else 0
     fails = sum(int(x) for x in re.findall(r"(?:failures|errors)=(\d+)", p.stderr))
@@ -45,7 +51,12 @@ def grade(eid):
         tests = OUT / "test_stats.py"
         if not stats.is_file() or not tests.is_file():
             return 0.0, "stats.py or test_stats.py missing in output"
-        ran, ok = run_tests(stats, HIDDEN.replace("moving_average([1, 2, 3, 4], 2), [1.5, 2.5, 3.5]", "1, 1").replace("moving_average([2, 4], 2), [3.0]", "1, 1"))
+        ran, ok = run_tests(
+            stats,
+            HIDDEN.replace("moving_average([1, 2, 3, 4], 2), [1.5, 2.5, 3.5]", "1, 1").replace(
+                "moving_average([2, 4], 2), [3.0]", "1, 1"
+            ),
+        )
         median_fixed = ok == ran and ran > 0
         src = tests.read_text()
         added = src.count("def test_") > 4

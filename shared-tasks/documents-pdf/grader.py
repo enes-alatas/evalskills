@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Shared deterministic grader for the documents/pdf category (default_plus_custom).
 Checks output files only; stdlib so it runs in any task container."""
-import json, os, re, zlib
+
+import json
+import os
+import re
+import zlib
 from pathlib import Path
 
 ENTRY = Path(os.environ.get("HARBOR_ENTRY_JSON", "/tests/entry.json"))
@@ -32,11 +36,14 @@ def grade(eid: str):
             j = json.loads((OUT / "invoice.json").read_text())
         except Exception as e:
             return 0.0, f"invoice.json missing or invalid: {type(e).__name__}"
-        checks = [str(j.get("invoice_number", "")).strip() == "INV-20417",
-                  abs(float(str(j.get("total_due", "nan")).replace(",", "")) - 1098.60) < 0.005
-                  if re.match(r"^[\d.,]+$", str(j.get("total_due", ""))) else False,
-                  str(j.get("currency", "")).upper() in ("EUR", "€"),
-                  "northwind" in str(j.get("bill_to", "")).lower()]
+        checks = [
+            str(j.get("invoice_number", "")).strip() == "INV-20417",
+            abs(float(str(j.get("total_due", "nan")).replace(",", "")) - 1098.60) < 0.005
+            if re.match(r"^[\d.,]+$", str(j.get("total_due", "")))
+            else False,
+            str(j.get("currency", "")).upper() in ("EUR", "€"),
+            "northwind" in str(j.get("bill_to", "")).lower(),
+        ]
         return sum(checks) / 4, f"{sum(checks)}/4 fields correct"
     if eid == "pdf-shared-merge":
         p = OUT / "merged.pdf"

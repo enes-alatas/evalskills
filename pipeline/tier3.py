@@ -8,6 +8,7 @@ cases + the same deterministic grader, which is what makes their live scores com
 Usage (once unblocked):
   python3 -I pipeline/tier3.py OWNER/REPO SKILL_PATH TASK_SET [--dry-run]
 """
+
 import json
 import os
 import shutil
@@ -21,8 +22,8 @@ import evaluate as ev  # noqa: E402
 
 SHARED = ev.ROOT / "shared-tasks"
 TIER3_TIMEOUT = int(os.environ.get("TIER3_TIMEOUT", "3600"))
-AGENT = os.environ.get("TIER3_AGENT", "opencode")         # nv_build default agent
-ENV_MODE = os.environ.get("TIER3_ENV_MODE", "docker")     # never "local" for untrusted skills
+AGENT = os.environ.get("TIER3_AGENT", "opencode")  # nv_build default agent
+ENV_MODE = os.environ.get("TIER3_ENV_MODE", "docker")  # never "local" for untrusted skills
 N_ATTEMPTS = os.environ.get("TIER3_N_ATTEMPTS", "1")
 
 
@@ -50,10 +51,31 @@ def prepare(skill_dir: Path, task_set: str, dest: Path) -> Path:
 def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
     if ENV_MODE == "local":
         raise SystemExit("refusing local mode: untrusted skills must run in an isolated sandbox")
-    return [ev.UV, "run", "-q", "--python", "3.13", "--extra", "tier3", "skillevaluator", "tier3", "evaluate",
-            str(skill_dir), "--agents", AGENT, "--env-mode", ENV_MODE, "--n-attempts", N_ATTEMPTS,
-            "--evaluated-source-repository", repo, "--evaluated-source-revision", commit,
-            "--results-dir", str(out)]
+    return [
+        ev.UV,
+        "run",
+        "-q",
+        "--python",
+        "3.13",
+        "--extra",
+        "tier3",
+        "skillevaluator",
+        "tier3",
+        "evaluate",
+        str(skill_dir),
+        "--agents",
+        AGENT,
+        "--env-mode",
+        ENV_MODE,
+        "--n-attempts",
+        N_ATTEMPTS,
+        "--evaluated-source-repository",
+        repo,
+        "--evaluated-source-revision",
+        commit,
+        "--results-dir",
+        str(out),
+    ]
 
 
 def main():
@@ -64,7 +86,11 @@ def main():
     tmp = Path(tempfile.mkdtemp(prefix="t3-"))
     try:
         skill = prepare(repo_dir / skill_path, task_set, tmp / Path(skill_path).name)
-        out = ev.REPORTS / f"{repo.replace('/', '__')}__{skill_path.replace('/', '__')}" / f"{commit[:12]}-tier3-{task_set}"
+        out = (
+            ev.REPORTS
+            / f"{repo.replace('/', '__')}__{skill_path.replace('/', '__')}"
+            / f"{commit[:12]}-tier3-{task_set}"
+        )
         cmd = command(skill, out, repo, commit)
         if "--dry-run" in sys.argv:
             print(json.dumps({"cmd": cmd, "evals": sorted(p.name for p in (skill / "evals").iterdir())}, indent=1))

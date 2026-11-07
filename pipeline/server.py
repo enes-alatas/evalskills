@@ -2,6 +2,7 @@
 
 Run: python3 -I pipeline/server.py [--port 8080]
 """
+
 import hashlib
 import json
 import os
@@ -88,15 +89,27 @@ def add_record(c, rec, category=None):
     sid = skill_id(rec["source"]["repo"], rec["source"]["skill_path"])
     if not c.execute("SELECT 1 FROM skills WHERE id=?", (sid,)).fetchone():
         name, desc = read_desc(rec)
-        c.execute("INSERT INTO skills VALUES(?,?,?,?,?,?,?,?)",
-                  (sid, rec["source"]["repo"], rec["source"]["skill_path"], name or rec["skill_name"],
-                   desc, category or rec.get("category") or "other", "catalog", time.time()))
-    c.execute("INSERT OR REPLACE INTO evaluations VALUES(?,?,?,?,?,?,?)",
-              (rec["id"], sid, rec["mode"], rec["status"], rec["source"]["commit"], rec["started_at"],
-               json.dumps(rec)))
+        c.execute(
+            "INSERT INTO skills VALUES(?,?,?,?,?,?,?,?)",
+            (
+                sid,
+                rec["source"]["repo"],
+                rec["source"]["skill_path"],
+                name or rec["skill_name"],
+                desc,
+                category or rec.get("category") or "other",
+                "catalog",
+                time.time(),
+            ),
+        )
+    c.execute(
+        "INSERT OR REPLACE INTO evaluations VALUES(?,?,?,?,?,?,?)",
+        (rec["id"], sid, rec["mode"], rec["status"], rec["source"]["commit"], rec["started_at"], json.dumps(rec)),
+    )
 
 
 # ---------------------------------------------------------------- views
+
 
 def public_eval(rec):
     """Strip local paths; keep everything a reader needs to interpret the result."""
@@ -106,9 +119,11 @@ def public_eval(rec):
     r.pop("_cached", None)
     r["report_dir"] = None
     # Only the sanitized JSON is public; full HTML/Markdown reports may quote matched secrets/PII lines.
-    r["reports"] = {k: f"/reports/{rec['report_dir'].split('/', 1)[1]}/{fn}"
-                    for k, fn in (("json", "report.public.json"),)
-                    if (ROOT / rec["report_dir"] / fn).is_file()}
+    r["reports"] = {
+        k: f"/reports/{rec['report_dir'].split('/', 1)[1]}/{fn}"
+        for k, fn in (("json", "report.public.json"),)
+        if (ROOT / rec["report_dir"] / fn).is_file()
+    }
     return r
 
 
@@ -118,8 +133,12 @@ def security_level(t1):
     d = sec.get("distinct") or {}
     sec_checks = [ch for ch in t1.get("checks", []) if ch["name"] in ev.SECURITY_CHECKS]
     return {
-        "critical": d.get("critical", 0), "high": d.get("high", 0), "medium": d.get("medium", 0),
-        "low": d.get("low", 0), "raw": sec.get("raw"), "top": sec.get("top", []),
+        "critical": d.get("critical", 0),
+        "high": d.get("high", 0),
+        "medium": d.get("medium", 0),
+        "low": d.get("low", 0),
+        "raw": sec.get("raw"),
+        "top": sec.get("top", []),
         "checks": {ch["name"]: ch["status"] for ch in sec_checks},
         "incomplete": sorted({x for ch in sec_checks for x in ch.get("incomplete", [])}),
         "scanner_error": bool(t1.get("scanner_errors")),
@@ -142,13 +161,27 @@ def skill_row(c, s, detail=False):
     else:
         state = "unknown"
     row = {
-        "id": s["id"], "name": s["name"], "description": s["description"], "repo": s["repo"],
-        "path": s["path"], "category": s["category"], "origin": s["origin"], "state": state,
-        "structural": {"score": q.get("score"), "grade": q.get("grade"), "dimensions": q.get("dimensions"),
-                       "skill_type": q.get("skill_type")} if latest and latest["status"] == "completed" else None,
+        "id": s["id"],
+        "name": s["name"],
+        "description": s["description"],
+        "repo": s["repo"],
+        "path": s["path"],
+        "category": s["category"],
+        "origin": s["origin"],
+        "state": state,
+        "structural": {
+            "score": q.get("score"),
+            "grade": q.get("grade"),
+            "dimensions": q.get("dimensions"),
+            "skill_type": q.get("skill_type"),
+        }
+        if latest and latest["status"] == "completed"
+        else None,
         "security": security_level(t1) if latest and latest["status"] == "completed" else None,
-        "live": {"status": "not_evaluated",
-                 "reason": "Live (Tier 3) evaluation is not available on this deployment yet."},
+        "live": {
+            "status": "not_evaluated",
+            "reason": "Live (Tier 3) evaluation is not available on this deployment yet.",
+        },
         "commit": (latest or {}).get("source", {}).get("commit"),
         "evaluated_at": (latest or {}).get("started_at"),
         "job": dict(job) if job else None,
@@ -157,9 +190,16 @@ def skill_row(c, s, detail=False):
         row["job"].pop("client", None)
     if detail:
         row["evaluation"] = public_eval(latest)
-        row["history"] = [{"id": e["id"], "status": e["status"], "commit": e["source"]["commit"],
-                           "started_at": e["started_at"],
-                           "score": ((e.get("tier1") or {}).get("quality") or {}).get("score")} for e in evs]
+        row["history"] = [
+            {
+                "id": e["id"],
+                "status": e["status"],
+                "commit": e["source"]["commit"],
+                "started_at": e["started_at"],
+                "score": ((e.get("tier1") or {}).get("quality") or {}).get("score"),
+            }
+            for e in evs
+        ]
         row["install"] = install_hint(s)
     return row
 
@@ -170,11 +210,12 @@ def install_hint(s):
     return {
         "verified": "SKILL.md present at evaluated commit",
         "claude_code": f"git clone --depth 1 https://github.com/{s['repo']} /tmp/skill-src && "
-                       f"cp -r /tmp/skill-src/{s['path']} ~/.claude/skills/{name}",
+        f"cp -r /tmp/skill-src/{s['path']} ~/.claude/skills/{name}",
     }
 
 
 # ---------------------------------------------------------------- worker
+
 
 def worker():
     while True:
@@ -204,11 +245,14 @@ def worker():
                 note = f"{type(e).__name__}: {e}"[:300]
                 traceback.print_exc()
             with db() as c:
-                c.execute("UPDATE jobs SET status=?, finished_at=?, evaluation_id=?, note=? WHERE id=?",
-                          (status, time.time(), eid, note, job["id"]))
+                c.execute(
+                    "UPDATE jobs SET status=?, finished_at=?, evaluation_id=?, note=? WHERE id=?",
+                    (status, time.time(), eid, note, job["id"]),
+                )
 
 
 # ---------------------------------------------------------------- HTTP
+
 
 def rate_ok(c, client, kind, limit):
     since = time.time() - 3600
@@ -258,21 +302,34 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, f.read_bytes(), "text/plain; charset=utf-8")
         if p.startswith("/reports/"):
             f = (ROOT / p[1:]).resolve()
-            if str(f).startswith(str((ROOT / "reports").resolve()) + "/") and f.is_file() \
-                    and f.name == "report.public.json":
-                ct = {".json": "application/json", ".html": "text/html; charset=utf-8",
-                      ".md": "text/plain; charset=utf-8"}[f.suffix]
+            if (
+                str(f).startswith(str((ROOT / "reports").resolve()) + "/")
+                and f.is_file()
+                and f.name == "report.public.json"
+            ):
+                ct = {
+                    ".json": "application/json",
+                    ".html": "text/html; charset=utf-8",
+                    ".md": "text/plain; charset=utf-8",
+                }[f.suffix]
                 return self.send(200, f.read_bytes(), ct)
         if p == "/api/meta":
-            return self.send(200, {"categories": CATEGORIES, "evaluator": ev.evaluator_version(),
-                                   "limits": {"skills_per_submission": MAX_SKILLS_PER_SUBMISSION}})
+            return self.send(
+                200,
+                {
+                    "categories": CATEGORIES,
+                    "evaluator": ev.evaluator_version(),
+                    "limits": {"skills_per_submission": MAX_SKILLS_PER_SUBMISSION},
+                },
+            )
         if p == "/api/skills":
             with db() as c:
                 rows = [skill_row(c, s) for s in c.execute("SELECT * FROM skills")]
             return self.send(200, rows)
         if p.startswith("/api/skills/"):
-            sid = p[len("/api/skills/"):]
+            sid = p[len("/api/skills/") :]
             from urllib.parse import unquote
+
             sid = unquote(sid)
             with db() as c:
                 s = c.execute("SELECT * FROM skills WHERE id=?", (sid,)).fetchone()
@@ -281,9 +338,13 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, skill_row(c, s, detail=True))
         if p == "/api/queue":
             with db() as c:
-                q = [dict(r) for r in c.execute(
-                    "SELECT id, skill_id, status, created_at, started_at FROM jobs "
-                    "WHERE status IN ('queued','running') ORDER BY id")]
+                q = [
+                    dict(r)
+                    for r in c.execute(
+                        "SELECT id, skill_id, status, created_at, started_at FROM jobs "
+                        "WHERE status IN ('queued','running') ORDER BY id"
+                    )
+                ]
             return self.send(200, q)
         return self.send(404, {"error": "not found"})
 
@@ -323,7 +384,10 @@ class H(BaseHTTPRequestHandler):
             if not repo_dir.is_dir():
                 return self.send(400, {"error": "Look up the repository first"})
             with db() as c:
-                if c.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0] >= MAX_QUEUE:
+                if (
+                    c.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
+                    >= MAX_QUEUE
+                ):
                     return self.send(503, {"error": "Evaluation queue is full; try again later."})
                 if not rate_ok(c, client, "submit", SUBMISSIONS_PER_HOUR_PER_CLIENT):
                     return self.send(429, {"error": "Too many submissions; try again later."})
@@ -337,16 +401,29 @@ class H(BaseHTTPRequestHandler):
                     sid = skill_id(repo, path)
                     if not c.execute("SELECT 1 FROM skills WHERE id=?", (sid,)).fetchone():
                         fm = disc.frontmatter((sd / "SKILL.md").read_text(errors="replace")[:20000])
-                        c.execute("INSERT INTO skills VALUES(?,?,?,?,?,?,?,?)",
-                                  (sid, repo, path, fm.get("name") or sd.name, (fm.get("description") or "")[:400],
-                                   category, "submission", time.time()))
-                    active = c.execute("SELECT id FROM jobs WHERE skill_id=? AND status IN ('queued','running')",
-                                       (sid,)).fetchone()
+                        c.execute(
+                            "INSERT INTO skills VALUES(?,?,?,?,?,?,?,?)",
+                            (
+                                sid,
+                                repo,
+                                path,
+                                fm.get("name") or sd.name,
+                                (fm.get("description") or "")[:400],
+                                category,
+                                "submission",
+                                time.time(),
+                            ),
+                        )
+                    active = c.execute(
+                        "SELECT id FROM jobs WHERE skill_id=? AND status IN ('queued','running')", (sid,)
+                    ).fetchone()
                     if active:
                         out.append({"path": path, "skill_id": sid, "job": active["id"], "note": "already queued"})
                         continue
-                    cur = c.execute("INSERT INTO jobs(skill_id,status,created_at,client) VALUES(?,?,?,?)",
-                                    (sid, "queued", time.time(), client))
+                    cur = c.execute(
+                        "INSERT INTO jobs(skill_id,status,created_at,client) VALUES(?,?,?,?)",
+                        (sid, "queued", time.time(), client),
+                    )
                     out.append({"path": path, "skill_id": sid, "job": cur.lastrowid})
             WAKE.set()
             return self.send(202, {"submitted": out})
@@ -357,14 +434,21 @@ def bootstrap():
     """First start in a fresh deployment: seed results + sanitized public reports from the shipped catalog."""
     import shutil
     import tarfile
+
     if ev.RESULTS != ev.SEED_RESULTS and not ev.RESULTS.exists() and ev.SEED_RESULTS.exists():
         ev.RESULTS.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ev.SEED_RESULTS, ev.RESULTS)
     bundle = ROOT / "catalog" / "public-reports.tar.gz"
     if bundle.exists() and not any(ev.REPORTS.glob("*/*/report.public.json")):
         with tarfile.open(bundle) as t:
-            members = [m for m in t.getmembers() if m.isfile() and m.name.endswith("/report.public.json")
-                       and not m.name.startswith("/") and ".." not in m.name.split("/")]
+            members = [
+                m
+                for m in t.getmembers()
+                if m.isfile()
+                and m.name.endswith("/report.public.json")
+                and not m.name.startswith("/")
+                and ".." not in m.name.split("/")
+            ]
             try:
                 t.extractall(ev.REPORTS, members=members, filter="data")
             except TypeError:  # Python < 3.11.4 has no filter; members are already vetted (regular files, no ..)
