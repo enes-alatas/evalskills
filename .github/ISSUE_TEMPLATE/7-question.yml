@@ -1,0 +1,18 @@
+name: Question
+description: "Something needs a decision or an answer."
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: "Question"
+      description: "One question, with the context needed to answer it."
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: "Options considered"
+      description: "Options and your recommendation."
+    validations:
+      required: false

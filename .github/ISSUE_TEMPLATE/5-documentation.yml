@@ -1,0 +1,18 @@
+name: Documentation
+description: "Docs are missing, wrong or unclear."
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: where
+    attributes:
+      label: "Where"
+      description: "File and section."
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: "What should change"
+      description: "The fix."
+    validations:
+      required: true

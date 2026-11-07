@@ -1,0 +1,25 @@
+name: Improvement
+description: "Make something existing better."
+labels: ["improvement"]
+body:
+  - type: textarea
+    id: today
+    attributes:
+      label: "What it does today"
+      description: "Current behaviour and why it falls short."
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: "What changes"
+      description: "The improvement."
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: "Acceptance scenarios"
+      description: "Optional. WHEN <situation> THEN <what is seen>, with checks."
+    validations:
+      required: false

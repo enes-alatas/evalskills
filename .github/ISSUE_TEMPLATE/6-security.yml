@@ -1,0 +1,30 @@
+name: Security (team only)
+description: "A hardening task. Report vulnerabilities privately, never here."
+labels: ["security"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: "Weakness"
+      description: "What can go wrong, in your own words. No exploit details, no credential values."
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: "Severity"
+      description: "Mirrored as a severity:* label at triage."
+      options:
+        - critical
+        - high
+        - medium
+        - low
+    validations:
+      required: true
+  - type: textarea
+    id: fix
+    attributes:
+      label: "Proposed mitigation"
+      description: "What would close it."
+    validations:
+      required: true
