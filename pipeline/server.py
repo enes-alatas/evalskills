@@ -267,7 +267,7 @@ class H(BaseHTTPRequestHandler):
     server_version = "skill-inventory"
 
     def log_message(self, fmt, *a):
-        sys.stderr.write("%s %s\n" % (self.command, self.path))
+        sys.stderr.write(f"{self.command} {self.path}\n")
 
     def client(self):
         ip = self.headers.get("X-Forwarded-For", self.client_address[0]).split(",")[0].strip()

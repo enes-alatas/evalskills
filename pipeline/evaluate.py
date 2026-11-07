@@ -375,7 +375,7 @@ def resummarize() -> int:
 def load_results() -> list[dict]:
     if not RESULTS.exists():
         return []
-    return [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
+    return [json.loads(line) for line in RESULTS.read_text().splitlines() if line.strip()]
 
 
 if __name__ == "__main__":
