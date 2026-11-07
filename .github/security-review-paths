@@ -1,0 +1,19 @@
+# Paths whose change gets a security review before the merge request. One bash glob per line, matched against each
+# changed path in full; `*` also matches `/`. A PR matching any line is labelled `needs-security-review`.
+
+# Where public input enters, and where untrusted repositories are fetched and scanned.
+pipeline/server.py
+pipeline/discover.py
+pipeline/evaluate.py
+# Live evaluation: sandbox, model gateway, budgets.
+pipeline/tier3.py
+deploy/*
+# What is published: the report sanitizer and the public catalog export.
+pipeline/export_catalog.py
+# What runs with the repo's token, and the guards themselves.
+.github/workflows/*
+.github/security-review-paths
+scripts/secret-scan.sh
+scripts/security-paths.sh
+.gitleaks.toml
+pyproject.toml

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Install: ln -s ../../scripts/pre-commit .git/hooks/pre-commit
+exec "$(git rev-parse --show-toplevel)/scripts/secret-scan.sh" --staged
