@@ -1,0 +1,32 @@
+name: New feature
+description: "A new capability."
+labels: ["new feature"]
+body:
+  - type: textarea
+    id: today
+    attributes:
+      label: "What users see today"
+      description: "Start from what a visitor or submitter sees now."
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: "What changes"
+      description: "The new behaviour, and each surface it touches (leaderboard, result view, add-skill form, pipeline, API)."
+    validations:
+      required: true
+  - type: textarea
+    id: scenarios
+    attributes:
+      label: "Acceptance scenarios"
+      description: "One per line: WHEN <situation> THEN <what is seen>, each naming its check (test, screenshot, manual)."
+    validations:
+      required: true
+  - type: textarea
+    id: adrs
+    attributes:
+      label: "ADRs / methodology touched"
+      description: "Which ADRs or METHODOLOGY.md sections this relies on or changes."
+    validations:
+      required: false
