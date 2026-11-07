@@ -17,3 +17,5 @@ scripts/secret-scan.sh
 scripts/security-paths.sh
 .gitleaks.toml
 pyproject.toml
+.claude/hooks/*
+.claude/settings.json
