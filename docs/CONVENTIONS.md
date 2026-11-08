@@ -83,4 +83,12 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 
 ## Definition of done
 `ruff check`, `ruff format --check`, `pytest` and `scripts/secret-scan.sh` pass locally. Docs of record (README,
-METHODOLOGY, ADRs) are updated in the same PR. The template is filled. A UI change carries fixture screenshots.
+METHODOLOGY, ADRs) are updated in the same PR. The template is filled.
+
+## Screenshots
+- Any PR with a visual change embeds screenshots in its description. That covers the UI, diagrams and images in
+  docs. A reviewer judges what they can see, not a description of it.
+- UI: desktop (1280) and mobile (390). When an existing screen changes, show it before and after.
+- Images go on the `pr-assets` orphan branch under `pr-<n>/` and are embedded from there, so they never land on
+  `main`.
+- Only fixture or public catalog data. Never an admin view, a log, or anything with a credential or private data.
