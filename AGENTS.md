@@ -6,11 +6,12 @@ it links to the docs rather than repeating them.
 
 ## Read first, in this order
 1. `README.md`: what it is, setup, layout
-2. `docs/METHODOLOGY.md`: what each score means, and what it does not
-3. `docs/CONVENTIONS.md`: workflow, secrets, commits, issues, tests (**authoritative**)
-4. `docs/adr/`: why things are the way they are. Never contradict an accepted ADR silently. Amend it with a dated
+2. `docs/ARCHITECTURE.md`: the trust zones, the flow, and links to the ADRs
+3. `docs/METHODOLOGY.md`: what each score means, and what it does not
+4. `docs/CONVENTIONS.md`: workflow, secrets, commits, issues, tests (**authoritative**)
+5. `docs/adr/`: why things are the way they are. Never contradict an accepted ADR silently. Amend it with a dated
    block that only adds lines, or reverse it with a new ADR.
-5. `docs/EXPERIMENT_LOG.md`: the evidence behind the pipeline
+6. `docs/EXPERIMENT_LOG.md`: the evidence behind the pipeline
 
 ## Non-negotiables (digest; CONVENTIONS.md wins)
 - Every change lands by PR, with CI green and Enes's approval. Nobody merges their own work. The merge request comes

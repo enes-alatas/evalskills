@@ -10,7 +10,7 @@ metadata:
 # Security pass on a pull request
 
 Quality review belongs to `review-pr`. This pass answers only: what does this change open, and does it hold? The
-system's zones are described in the design doc (`docs/DESIGN-DRAFT.md` until it moves into an ADR).
+system's zones are in `docs/adr/0002-three-trust-zones.md`, the sandbox in ADR-0003 and secrets in ADR-0004.
 
 ## 1. Name the boundary, then answer its question on the PR
 - **Public → zone A (app):** does untrusted input (a URL, a form field, a repo's files, an evaluator report) reach
