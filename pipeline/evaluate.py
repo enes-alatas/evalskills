@@ -281,7 +281,7 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
     mode = "tier1-llm" if llm else "tier1-static"
     if not force:
         for prev in load_results():
-            if (
+            if prev.get("status") == "completed" and (  # a failure is retried on resubmission, never reused
                 prev["source"]["repo"],
                 prev["source"]["skill_path"],
                 prev["source"]["tree_digest"],

@@ -62,7 +62,8 @@ verdict.
 
 Every result records the repository, skill path, exact commit, a SHA-256 digest of the skill folder, the
 SkillEvaluator version and commit, the mode, the duration and the cost. If the folder digest and the evaluator commit
-are unchanged, a resubmission reuses the existing result instead of running again.
+are unchanged, a resubmission reuses the existing completed result instead of running again. A failed run is never
+reused: resubmitting the same skill runs it again.
 
 ## Safety
 
