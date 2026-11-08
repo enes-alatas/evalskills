@@ -4,6 +4,7 @@ Run: python3 -I pipeline/server.py [--port 8080]
 """
 
 import hashlib
+import ipaddress
 import json
 import os
 import sqlite3
@@ -34,6 +35,14 @@ DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30
 
 CACHE_MAX_AGE_HOURS = float(os.environ.get("CACHE_MAX_AGE_HOURS", "6"))
 CACHE_MAX_REPOS = int(os.environ.get("CACHE_MAX_REPOS", "40"))  # x 300 MB per clone bounds the cache volume
+# Who may set X-Forwarded-For. Loopback only by default: the deployment pins Caddy to a fixed address on the web
+# network and sets TRUSTED_PROXIES to it (Enes, 2026-11-08). Unset there, every visitor shares one rate-limit bucket.
+TRUSTED_PROXIES = [
+    ipaddress.ip_network(n.strip())
+    for n in os.environ.get("TRUSTED_PROXIES", "127.0.0.0/8,::1/128").split(",")
+    if n.strip()
+]
+TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))  # how many proxies append to the header
 GIT_LOCK = ev.GIT_LOCK
 WAKE = threading.Event()
 
@@ -275,6 +284,20 @@ def rate_ok(c, client, kind, limit):
     return True
 
 
+def client_ip(peer: str, forwarded: str | None) -> str:
+    """The address rate limits are keyed on. X-Forwarded-For is believed only when the direct peer is a trusted proxy,
+    and then only the entry TRUSTED_PROXY_HOPS places from the right: entries further left were written by the
+    client, which can put anything there."""
+    try:
+        trusted = any(ipaddress.ip_address(peer) in net for net in TRUSTED_PROXIES)
+    except ValueError:
+        trusted = False
+    hops = [h.strip() for h in (forwarded or "").split(",") if h.strip()]
+    if not trusted or TRUSTED_PROXY_HOPS < 1 or len(hops) < TRUSTED_PROXY_HOPS:
+        return peer
+    return hops[-TRUSTED_PROXY_HOPS]
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "evalskills"
 
@@ -282,7 +305,7 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write(f"{self.command} {self.path}\n")
 
     def client(self):
-        ip = self.headers.get("X-Forwarded-For", self.client_address[0]).split(",")[0].strip()
+        ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For"))
         return hashlib.sha256(ip.encode()).hexdigest()[:16]
 
     def send(self, code, body, ctype="application/json"):
