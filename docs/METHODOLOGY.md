@@ -71,5 +71,6 @@ are unchanged, a resubmission reuses the existing result instead of running agai
   snapshot for scanning.
 * The evaluator subprocess gets an allow-listed environment. Service credentials are never passed to the
   static run.
-* Limits: repositories up to 300 MB, 10 skills per submission, 20 submissions and 30 lookups per client per hour,
+* Limits: repositories up to 300 MB (checked with the GitHub API before cloning, and again on disk after cloning; when
+  the API can't give the size, the lookup is refused rather than cloned), 10 skills per submission, 20 submissions and 30 lookups per client per hour,
   100 queued jobs, and a 600 s timeout per evaluation.

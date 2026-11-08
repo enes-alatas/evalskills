@@ -5,9 +5,8 @@ import re
 import subprocess
 import urllib.request
 
-from evaluate import CACHE, REPO_RE, checkout, git_env  # noqa: F401
+from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env  # noqa: F401
 
-MAX_REPO_KB = 300_000  # refuse repos over ~300 MB
 MAX_SKILLS_LISTED = 200
 
 URL_RE = re.compile(
@@ -42,8 +41,8 @@ def repo_meta(repo: str) -> dict:
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise DiscoveryError("Repository not found or not public") from e
-        if e.code == 403:  # rate limited: fall back to cloning without the size check
-            return {}
+        if e.code in (403, 429):  # rate limited: without the size we must not clone (fail closed)
+            raise DiscoveryError("GitHub is rate-limiting this server; please try again later") from e
         raise
 
 
@@ -78,6 +77,8 @@ def discover(url: str) -> dict:
         d, commit = checkout(repo)
     except subprocess.CalledProcessError as e:
         raise DiscoveryError("Could not clone repository") from e
+    except RepoTooLarge as e:
+        raise DiscoveryError(str(e)) from e
     root = d.resolve()
     skills = []
     for p in sorted(root.rglob("SKILL.md")):
