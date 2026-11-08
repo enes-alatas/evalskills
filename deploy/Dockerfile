@@ -1,5 +1,5 @@
-# Skill Inventory: app server + SkillEvaluator in one image.
-# Build:  docker build -f deploy/Dockerfile -t skill-inventory .
+# evalskills: app server + SkillEvaluator in one image.
+# Build:  docker build -f deploy/Dockerfile -t evalskills .
 FROM python:3.13-slim
 
 ARG SKILLEVALUATOR_REF=d136a597c54784ad8a0ce28542c208602b397a5c

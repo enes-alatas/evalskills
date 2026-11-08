@@ -1,4 +1,4 @@
-"""Skill inventory: tiny stdlib HTTP server + SQLite store + single evaluation worker.
+"""evalskills: tiny stdlib HTTP server + SQLite store + single evaluation worker.
 
 Run: python3 -I pipeline/server.py [--port 8080]
 """
@@ -264,7 +264,7 @@ def rate_ok(c, client, kind, limit):
 
 
 class H(BaseHTTPRequestHandler):
-    server_version = "skill-inventory"
+    server_version = "evalskills"
 
     def log_message(self, fmt, *a):
         sys.stderr.write(f"{self.command} {self.path}\n")

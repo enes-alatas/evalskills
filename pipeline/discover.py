@@ -34,7 +34,7 @@ def parse_repo_url(url: str) -> tuple[str, str | None]:
 def repo_meta(repo: str) -> dict:
     req = urllib.request.Request(
         f"https://api.github.com/repos/{repo}",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "skill-inventory"},
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "evalskills"},
     )
     try:
         with urllib.request.urlopen(req, timeout=20) as r:

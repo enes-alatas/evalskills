@@ -2,12 +2,12 @@
 # Usage: cp env.example .env && docker compose -f deploy/compose.yaml up -d --build
 # Caddy (on the same "web" network as this service):
 #   skills.example.com {
-#     reverse_proxy skill-inventory:8080
+#     reverse_proxy evalskills:8080
 #   }
 services:
-  skill-inventory:
+  evalskills:
     build: { context: .., dockerfile: deploy/Dockerfile }
-    container_name: skill-inventory
+    container_name: evalskills
     restart: unless-stopped
     env_file: .env
     environment:
