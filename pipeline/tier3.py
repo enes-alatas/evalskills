@@ -6,7 +6,10 @@ replace its evals/ with the shared set (evals.json, grader.py, config.yml, files
 cases + the same deterministic grader, which is what makes their live scores comparable.
 
 Usage (once unblocked):
+  DOCKER_HOST=unix:///run/docker-evals.sock TIER3_GATEWAY_URL=... TIER3_GATEWAY_TOKEN_FILE=... \
   python3 -I pipeline/tier3.py OWNER/REPO SKILL_PATH TASK_SET [--dry-run]
+It refuses to start on any other daemon or env mode, with a real provider key in its environment, or without a
+gateway token (see trial_env).
 """
 
 import json
@@ -25,6 +28,48 @@ TIER3_TIMEOUT = int(os.environ.get("TIER3_TIMEOUT", "3600"))
 AGENT = os.environ.get("TIER3_AGENT", "opencode")  # nv_build default agent
 ENV_MODE = os.environ.get("TIER3_ENV_MODE", "docker")  # never "local" for untrusted skills
 N_ATTEMPTS = os.environ.get("TIER3_N_ATTEMPTS", "1")
+EVALS_SOCKET = "unix:///run/docker-evals.sock"  # the gVisor daemon (ADR-0003, deploy/gvisor/)
+REAL_KEYS = ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "OPENAI_API_KEY", "SKILL_EVAL_LLM_API_KEY")
+
+
+class Unsafe(SystemExit):
+    pass
+
+
+def trial_env(environ=os.environ) -> dict:
+    """The environment for the SkillEvaluator → agent chain, or Unsafe before anything runs or spends.
+
+    ADR-0003: trials run only on the gVisor docker-evals daemon. ADR-0004: this chain never holds a real provider
+    key; it gets the model gateway's URL and a per-run token (read from a file the gateway issues), as SkillEvaluator's
+    openai-compatible provider."""
+    if ENV_MODE != "docker":
+        raise Unsafe(f"refusing --env-mode {ENV_MODE}: only docker on the docker-evals daemon is approved (ADR-0003)")
+    if environ.get("DOCKER_HOST") != EVALS_SOCKET:
+        raise Unsafe(f"refusing: DOCKER_HOST must be {EVALS_SOCKET}, not the host's main Docker daemon (ADR-0003)")
+    held = [k for k in REAL_KEYS if environ.get(k)]
+    if held:
+        raise Unsafe(f"refusing: {', '.join(held)} is set; real keys live only in the gateway (ADR-0004)")
+    url, token_file = environ.get("TIER3_GATEWAY_URL"), environ.get("TIER3_GATEWAY_TOKEN_FILE")
+    if not url or not token_file:
+        raise Unsafe("refusing: set TIER3_GATEWAY_URL and TIER3_GATEWAY_TOKEN_FILE (a per-run gateway token)")
+    try:
+        token = Path(token_file).read_text().strip()
+    except OSError as e:
+        raise Unsafe(f"refusing: cannot read TIER3_GATEWAY_TOKEN_FILE ({e.strerror})") from e
+    if not token:
+        raise Unsafe("refusing: TIER3_GATEWAY_TOKEN_FILE is empty")
+    env = ev.git_env()
+    env.update(
+        {
+            "DOCKER_HOST": EVALS_SOCKET,
+            "SKILL_EVAL_LLM_PROVIDER": "openai-compatible",
+            "SKILL_EVAL_LLM_BASE_URL": url,
+            "SKILL_EVAL_LLM_API_KEY": token,
+        }
+    )
+    if environ.get("SKILL_EVAL_LLM_MODEL"):
+        env["SKILL_EVAL_LLM_MODEL"] = environ["SKILL_EVAL_LLM_MODEL"]
+    return env
 
 
 def prepare(skill_dir: Path, task_set: str, dest: Path) -> Path:
@@ -49,8 +94,6 @@ def prepare(skill_dir: Path, task_set: str, dest: Path) -> Path:
 
 
 def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
-    if ENV_MODE == "local":
-        raise SystemExit("refusing local mode: untrusted skills must run in an isolated sandbox")
     return [
         ev.UV,
         "run",
@@ -81,6 +124,8 @@ def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     repo, skill_path, task_set = args
+    dry = "--dry-run" in sys.argv
+    env = None if dry else trial_env()  # refuse unsafe setups before cloning or spending anything
     with ev.GIT_LOCK:
         repo_dir, commit = ev.checkout(repo)
     tmp = Path(tempfile.mkdtemp(prefix="t3-"))
@@ -92,11 +137,9 @@ def main():
             / f"{commit[:12]}-tier3-{task_set}"
         )
         cmd = command(skill, out, repo, commit)
-        if "--dry-run" in sys.argv:
+        if dry:
             print(json.dumps({"cmd": cmd, "evals": sorted(p.name for p in (skill / "evals").iterdir())}, indent=1))
             return
-        env = ev.git_env()
-        env.update({k: v for k, v in os.environ.items() if k in ev.PROVIDER_VARS or k == "DOCKER_HOST"})
         out.mkdir(parents=True, exist_ok=True)
         p = subprocess.run(cmd, cwd=ev.EVALUATOR_DIR, env=env, capture_output=True, text=True, timeout=TIER3_TIMEOUT)
         (out / "run.log").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr)
