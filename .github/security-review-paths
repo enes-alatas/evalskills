@@ -12,6 +12,7 @@ deploy/*
 pipeline/export_catalog.py
 # What runs with the repo's token, and the guards themselves.
 .github/workflows/*
+scripts/skill_gate.py
 .github/security-review-paths
 scripts/secret-scan.sh
 scripts/security-paths.sh

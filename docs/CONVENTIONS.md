@@ -68,6 +68,9 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - Workflows trigger on `pull_request` and `push`, never `pull_request_target`. They declare least-privilege
   `permissions:`, pin actions by commit SHA (Dependabot bumps them), and use no secrets.
 - CI never executes a submitted skill and never calls a model.
+- The repo's own skills (`.claude/skills/`) carry `metadata.author` and pass SkillEvaluator Tier 1 in the `skills`
+  workflow: quality at least 80, every validator passed except the advisory Schema & Repository Governance and
+  Security Scan, whose findings the reviewer reads in the job summary. A scanner crash is red; re-run the job.
 - A PR touching a path in `.github/security-review-paths` is labelled `needs-security-review` and waits for a
   security review comment at its head.
 
