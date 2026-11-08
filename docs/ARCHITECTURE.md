@@ -33,6 +33,4 @@ overspending.
 
 ## Open items
 - Host specs (`nproc`, `free -g`, `uname -r`) and the name of Caddy's Docker network.
-- `deploy/gvisor/README.md` still names a single `br-evals` 172.31.250.0/24 bridge, which doesn't match the /20
-  pool in ADR-0003.
 - A model key for live runs.

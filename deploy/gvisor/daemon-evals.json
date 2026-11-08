@@ -5,7 +5,7 @@
   "exec-root": "/run/docker-evals",
   "pidfile": "/run/docker-evals.pid",
   "bridge": "br-evals",
-  "default-address-pools": [{"base": "172.31.240.0/20", "size": 28}],
+  "default-address-pools": [{"base": "172.31.240.0/21", "size": 28}],
   "runtimes": {"runsc": {"path": "/usr/bin/runsc", "runtimeArgs": ["--platform=systrap", "--network=sandbox"]}},
   "default-runtime": "runsc",
   "icc": false,
