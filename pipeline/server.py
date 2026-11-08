@@ -29,6 +29,7 @@ CATEGORIES = json.loads((ROOT / "catalog" / "categories.json").read_text())
 MAX_SKILLS_PER_SUBMISSION = int(os.environ.get("MAX_SKILLS_PER_SUBMISSION", "10"))
 MAX_QUEUE = int(os.environ.get("MAX_QUEUE", "100"))
 SUBMISSIONS_PER_HOUR_PER_CLIENT = int(os.environ.get("SUBMISSIONS_PER_HOUR", "20"))
+MAX_BODY = 20_000
 DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30"))
 
 GIT_LOCK = ev.GIT_LOCK
@@ -275,10 +276,15 @@ class H(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def body(self):
+        """The request's JSON object. Raises ValueError, before reading anything, unless Content-Length is in
+        0..MAX_BODY; raises ValueError for a body that is not a JSON object."""
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 20_000:
-            raise ValueError("request too large")
-        return json.loads(self.rfile.read(n) or b"{}")
+        if not 0 <= n <= MAX_BODY:
+            raise ValueError("bad Content-Length")
+        b = json.loads(self.rfile.read(n) or b"{}")
+        if not isinstance(b, dict):
+            raise ValueError("JSON body is not an object")
+        return b
 
     def do_GET(self):
         p = self.path.split("?")[0]
