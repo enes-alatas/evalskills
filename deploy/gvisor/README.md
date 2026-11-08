@@ -8,7 +8,9 @@ Goal: live Tier 3 trials run under gVisor (runsc, systrap platform, so no /dev/k
 | Socket | `/run/docker-evals.sock` (group `docker-evals`; only the orchestrator gets it) |
 | Data root | `/var/lib/docker-evals` |
 | Default runtime | `runsc` |
-| Bridge | `br-evals`, 172.31.250.0/24 (must not overlap existing networks) |
+| Default bridge | `br-evals`, 172.31.248.0/24 |
+| Trial networks | pool 172.31.240.0/21, one /28 per network (Harbor creates one per trial) |
+| Firewall scope | 172.31.240.0/20, which covers both of the above; it must not overlap the host's other networks |
 | Egress | only the model gateway (see `firewall.sh`) |
 
 Steps (as root): `install.sh`, review `daemon-evals.json` and the unit, `systemctl enable --now docker-evals`,

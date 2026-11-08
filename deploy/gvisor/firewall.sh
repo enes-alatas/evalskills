@@ -1,5 +1,5 @@
 #!/bin/sh
-# DRAFT. Harbor creates a compose network per trial, so rules match the eval daemon address pool (172.31.240.0/20), not one bridge.
+# DRAFT. Harbor creates a compose network per trial, so rules match the eval daemon's whole range (172.31.240.0/20): the trial pool 172.31.240.0/21 and the default bridge 172.31.248.0/24.
 # Trials may only reach the model gateway (GATEWAY_IP:GATEWAY_PORT) and DNS; everything else is dropped,
 # including the host's own services and the main Docker networks.
 set -eu
