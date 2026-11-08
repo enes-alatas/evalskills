@@ -114,7 +114,7 @@ function detailHtml(s) {
     const dims = Object.entries(q.dimensions || {}).map(([k, v]) => `<span>${esc(k)}</span><span>${Number(v).toFixed(0)}</span>`).join("");
     left += `<h3>Score breakdown</h3>
       <div class="br"><b>Structure</b><span class="f">${q.score != null ? q.score.toFixed(1) : "None"}</span>
-        <span class="d">SkillEvaluator's static quality rubric on SKILL.md and the folder layout. Says nothing about how an agent performs with the skill.</span>
+        <span class="d">SkillEvaluator's static quality rubric on SKILL.md and the folder layout. Copies of the same skill can differ by 2 to 3 points, so read smaller gaps as a tie. Says nothing about how an agent performs with the skill.</span>
         ${dims ? `<details><summary>Dimensions</summary><div class="dims">${dims}</div></details>` : ""}</div>
       ${securityLine(s, t1)}
       <div class="br"><b>Live tasks</b><span class="f">${status("unknown", "Not run")}</span><span class="d">${esc(s.live.reason)}</span></div>
@@ -239,6 +239,11 @@ async function submitSkills() {
 async function init() {
   state.meta = await api("/api/meta");
   $("#cat").innerHTML = state.meta.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === "other" ? "selected" : ""}>${esc(c.label)}</option>`).join("");
+  $("#why-btn").addEventListener("click", (e) => {
+    const open = $("#why").hidden;
+    $("#why").hidden = !open;
+    e.currentTarget.setAttribute("aria-expanded", String(open));
+  });
   $("#q").addEventListener("input", (e) => { state.q = e.target.value; renderBoard(); });
   $("#tabs").addEventListener("change", (e) => { if (e.target.id === "more") { state.tab = e.target.value || "all"; renderTabs(); renderBoard(); } });
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) { state.tab = b.dataset.tab; renderTabs(); renderBoard(); } });
