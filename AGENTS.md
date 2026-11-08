@@ -30,6 +30,8 @@ it links to the docs rather than repeating them.
 - Live (Tier 3) evaluations spend real API budget. Run them only with Enes's go-ahead and within the caps, and
   record the cost in the PR. They never run in CI.
 - New dependencies take an argument in the PR description. Runtime dependencies also need an ADR.
+- A visual change (UI, diagram, docs image) embeds screenshots in the PR description: desktop and mobile, before
+  and after, hosted on the `pr-assets` branch.
 
 ## Commands
 ```

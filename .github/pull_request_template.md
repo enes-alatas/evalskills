@@ -8,6 +8,13 @@ Closes #
 
 -
 
+## Screenshots
+
+<!-- Required for any visual change (UI, diagrams, docs images): desktop and mobile, before and after, embedded from
+the pr-assets branch (pr-<n>/). Fixture or public catalog data only. "none" if nothing visual changed. -->
+
+-
+
 ## ADRs / methodology
 
 <!-- ADRs this relies on or changes, and whether docs/METHODOLOGY.md changed. "none" if none. -->
