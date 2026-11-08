@@ -1,4 +1,5 @@
 "use strict";
+// Presentation follows docs/DESIGN.md. UI text uses no em dashes.
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const api = async (path, opts) => {
@@ -8,54 +9,61 @@ const api = async (path, opts) => {
   return j;
 };
 
-const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null };
-const STATUS_LABEL = { completed: "Evaluated", queued: "Queued", running: "Running", failed: "Failed", unsupported: "Unsupported", unknown: "—" };
+const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null, openId: null, detail: null };
+const STATUS = { queued: "Queued", running: "Running", failed: "Failed", unsupported: "Unsupported", inconclusive: "Inconclusive", unknown: "Not evaluated" };
+const short = (sha) => (sha ? String(sha).slice(0, 7) : "");
+const day = (t) => { const m = String(t || "").match(/^(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ""; };
+const hasScore = (s) => s.structural && s.structural.score != null;
 
-function pill(st) { return `<span class="pill s-${esc(st)}">${esc(STATUS_LABEL[st] || st)}</span>`; }
-
-function sevCell(sec) {
-  if (!sec) return `<span class="hint">—</span>`;
-  if (sec.scanner_error) return `<span class="hint" title="SkillSpector exited with an error; counts would be incomplete">scanner error</span>`;
-  const parts = [];
-  if (sec.critical) parts.push(`<span class="c"><b>${sec.critical}</b> critical</span>`);
-  if (sec.high) parts.push(`<span class="h"><b>${sec.high}</b> high</span>`);
-  if (sec.medium) parts.push(`<span class="m"><b>${sec.medium}</b> med</span>`);
-  if (!parts.length) parts.push(`<span>none ≥ medium</span>`);
-  // counts are distinct finding types, not raw occurrences
-  const inc = sec.incomplete.length ? ` <span class="hint" title="Scanner did not finish: ${esc(sec.incomplete.join(", "))}">· partial</span>` : "";
-  return `<span class="sev">${parts.join(" · ")}${inc}</span>`;
-}
-
+function status(st, text) { return `<span class="st st-${esc(st)}">${esc(text || STATUS[st] || st)}</span>`; }
+function where(s) { return `${s.repo}${s.path !== "." ? "/" + s.path : ""}`; }
 function catLabel(id) { return (state.meta?.categories.find((c) => c.id === id) || {}).label || id; }
+
+// ---------------------------------------------------------------- board
+
+const TOP_TABS = 3;
 
 function renderTabs() {
   const counts = {};
   state.skills.forEach((s) => (counts[s.category] = (counts[s.category] || 0) + 1));
-  const tabs = [{ id: "all", label: "All" }, ...state.meta.categories.filter((c) => counts[c.id])];
-  $("#tabs").innerHTML = tabs.map((t) =>
-    `<button role="tab" data-tab="${t.id}" aria-selected="${state.tab === t.id}">${esc(t.label)}${t.id === "all" ? "" : ` <span class="hint">${counts[t.id]}</span>`}</button>`).join("");
+  const cats = state.meta.categories.filter((c) => counts[c.id]).sort((a, b) => (a.id === "other") - (b.id === "other") || counts[b.id] - counts[a.id]);
+  const top = cats.slice(0, TOP_TABS);
+  const more = cats.slice(TOP_TABS);
+  const btn = (t, n) => `<button role="tab" data-tab="${esc(t.id)}" aria-selected="${state.tab === t.id}">${esc(t.label)}${n ? `<span class="count">${n}</span>` : ""}</button>`;
+  const inMore = more.some((c) => c.id === state.tab);
+  const sel = more.length
+    ? `<select id="more" aria-label="More categories" class="${inMore ? "on" : ""}"><option value="">More</option>${more.map((c) => `<option value="${esc(c.id)}" ${state.tab === c.id ? "selected" : ""}>${esc(c.label)} (${counts[c.id]})</option>`).join("")}</select>`
+    : "";
+  $("#tabs").innerHTML = btn({ id: "all", label: "All" }) + top.map((c) => btn(c, counts[c.id])).join("") + sel;
 }
 
-function sortKey(s) { return s.structural?.score ?? -1; }
+function right(s) {
+  if (s.state === "queued" || s.state === "running") return status(s.state);
+  if (hasScore(s)) return `<span class="score">${s.structural.score.toFixed(1)}</span>`;
+  if (s.state === "completed") return status("unknown", "No score");
+  return status(s.state);
+}
+
+function rowHtml(s, rank) {
+  const sha = short(s.commit);
+  return `<button class="row" data-id="${esc(s.id)}" aria-expanded="${state.openId === s.id}">
+    <span class="rank">${rank ?? ""}</span>
+    <span class="nm">${esc(s.name)}<span class="meta">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span></span>
+    ${right(s)}</button>`;
+}
 
 function renderBoard() {
   const q = state.q.toLowerCase();
   const rows = state.skills
     .filter((s) => state.tab === "all" || s.category === state.tab)
     .filter((s) => !q || [s.name, s.repo, s.path, s.description, s.category].join(" ").toLowerCase().includes(q))
-    .sort((a, b) => sortKey(b) - sortKey(a) || a.name.localeCompare(b.name));
+    .sort((a, b) => (b.structural?.score ?? -1) - (a.structural?.score ?? -1) || a.name.localeCompare(b.name));
   let rank = 0;
-  $("#board tbody").innerHTML = rows.map((s) => {
-    const scored = s.structural && s.structural.score != null;
-    if (scored) rank++;
-    const score = scored ? `<span class="score">${s.structural.score.toFixed(1)}</span><span class="grade">${esc(s.structural.grade)}</span>` : `<span class="hint">no score</span>`;
-    return `<tr data-id="${esc(s.id)}" tabindex="0">
-      <td class="rank">${scored ? rank : ""}</td>
-      <td><div class="name">${esc(s.name)} ${s.state !== "completed" ? `<span class="show-sm">${pill(s.state)}</span>` : ""}</div><div class="repo">${esc(s.repo)}${s.path !== "." ? " / " + esc(s.path) : ""}</div><div class="desc">${esc(s.description)}</div></td>
-      <td class="num">${score}</td>
-      <td class="hide-sm">${sevCell(s.security)}</td>
-      <td class="hide-sm"><span class="pill s-na" title="${esc(s.live.reason)}">not run</span></td>
-      <td class="hide-sm">${pill(s.state)}</td></tr>`;
+  $("#board").innerHTML = rows.map((s) => {
+    const r = hasScore(s) ? ++rank : null;
+    const open = state.openId === s.id;
+    const inner = rowHtml(s, r);
+    return `<li data-id="${esc(s.id)}"${open ? ' class="open"' : ""}>${open ? `<div class="open-wrap">${inner}<div class="detail">${detailHtml(state.detail || s)}</div></div>` : inner}</li>`;
   }).join("");
   $("#empty").hidden = rows.length > 0;
 }
@@ -63,142 +71,187 @@ function renderBoard() {
 async function load() {
   state.skills = await api("/api/skills");
   renderTabs();
+  if (state.openId) await fetchDetail(state.openId, true);
   renderBoard();
   const busy = state.skills.some((s) => s.state === "queued" || s.state === "running");
   clearTimeout(state.timer);
-  state.timer = setTimeout(load, busy ? 4000 : 30000);
-  if ($("#detail").open && state.openId) refreshDetail(state.openId, true);
+  state.timer = setTimeout(() => load().catch(() => {}), busy ? 4000 : 30000);
 }
 
-function bars(dims) {
-  return `<div class="bars">${Object.entries(dims || {}).map(([k, v]) =>
-    `<span>${esc(k)}</span><span class="bar"><i style="width:${Math.max(0, Math.min(100, v))}%"></i></span><span class="num">${v.toFixed(0)}</span>`).join("")}</div>`;
+// ---------------------------------------------------------------- result view
+
+function securityLine(s, t1) {
+  const sec = s.security;
+  if (!t1 || !sec) return "";
+  if (sec.scanner_error) {
+    return `<div class="br"><b>Security</b><span class="f">${status("inconclusive", "Incomplete")}</span>
+      <span class="d">A scanner crashed during this run, so counts would be incomplete and are not shown</span></div>`;
+  }
+  const lvl = ["critical", "high", "medium"].filter((k) => sec[k]).map((k) => `${sec[k]} ${k}`);
+  const fig = lvl.length ? lvl.join(", ") : "None";
+  const partial = sec.incomplete.length ? ` Partial analysis: ${esc(sec.incomplete.join(", "))}.` : "";
+  const top = sec.top.length
+    ? `<details><summary>Findings</summary><ul class="checks">${sec.top.map((f) => `<li><span>${esc(f.title)}${f.count > 1 ? ` <span class="hint">×${f.count}</span>` : ""}</span><span class="mono">${esc(f.severity)}</span></li>`).join("")}</ul></details>`
+    : "";
+  return `<div class="br"><b>Security</b><span class="f">${esc(fig)}</span>
+    <span class="d">${lvl.length ? "Distinct finding types at medium or above." : "No findings at medium or above."} Static pattern matches, not confirmed vulnerabilities.${partial}</span>${top}</div>`;
 }
 
 function detailHtml(s) {
   const e = s.evaluation;
   const t1 = e?.tier1;
-  const src = e ? e.source.tree_url : `https://github.com/${s.repo}`;
-  let body = `<button class="close" data-close aria-label="Close">×</button>
-    <h2>${esc(s.name)} ${pill(s.state)}</h2>
-    <p class="muted">${esc(s.description)}</p>
-    <p><a href="${esc(src)}" target="_blank" rel="noopener">${esc(s.repo)}${s.path !== "." ? "/" + esc(s.path) : ""}</a> · ${esc(catLabel(s.category))}</p>`;
-  if (s.state === "queued" || s.state === "running") {
-    body += `<p class="notice">${s.state === "queued" ? "Waiting in the evaluation queue." : "SkillEvaluator is running static checks now (usually under a minute)."} This view updates automatically.</p>`;
-  }
-  if (s.job && s.job.note && !["queued", "running"].includes(s.state)) body += `<p class="hint">${esc(s.job.note)}</p>`;
-  if (e && e.status === "failed") body += `<p class="err">The evaluation did not produce a report: ${esc(e.error || "unknown error")}. No score is shown.</p>`;
+  let left = "";
+  let rightCol = "";
+  let lead = s.description ? `<p class="lead">${esc(s.description)}</p>` : "";
+
+  if (s.state === "queued") lead += `<p class="callout">Waiting in the evaluation queue. This view updates on its own.</p>`;
+  if (s.state === "running") lead += `<p class="callout">SkillEvaluator is running static checks now, usually under a minute. This view updates on its own.</p>`;
+  if (s.job && s.job.note && !["queued", "running"].includes(s.state)) lead += `<p class="callout">${esc(s.job.note)}</p>`;
+  if (e && e.status === "failed") lead += `<p class="callout bad">The evaluation did not produce a report: ${esc(e.error || "unknown error")}. No score is shown.</p>`;
+
   if (t1) {
-    body += `<h3>Structural quality · ${t1.quality.score?.toFixed(1)} (${esc(t1.quality.grade)})</h3>${bars(t1.quality.dimensions)}
-      <p class="hint">Deterministic SkillEvaluator quality rubric on SKILL.md and folder layout. Says nothing about how well an agent performs with the skill.</p>
-      <h3>Security findings</h3>
-      ${secHtml(t1)}
-      <h3>All static checks</h3>
-      <ul class="checks">${t1.checks.map((c) => `<li><span>${esc(c.name)}</span><span>${checkPill(c)}</span></li>`).join("")}</ul>
-      <p class="hint">"Schema & Repository Governance" fails for most third-party skills because SkillEvaluator's default publication policy treats a missing <code>metadata.author</code> as high severity. It is shown, but not used for ranking.</p>`;
+    const q = t1.quality;
+    const dims = Object.entries(q.dimensions || {}).map(([k, v]) => `<span>${esc(k)}</span><span>${Number(v).toFixed(0)}</span>`).join("");
+    left += `<h3>Score breakdown</h3>
+      <div class="br"><b>Structure</b><span class="f">${q.score != null ? q.score.toFixed(1) : "None"}</span>
+        <span class="d">SkillEvaluator's static quality rubric on SKILL.md and the folder layout. Says nothing about how an agent performs with the skill.</span>
+        ${dims ? `<details><summary>Dimensions</summary><div class="dims">${dims}</div></details>` : ""}</div>
+      ${securityLine(s, t1)}
+      <div class="br"><b>Live tasks</b><span class="f">${status("unknown", "Not run")}</span><span class="d">${esc(s.live.reason)}</span></div>
+      <p class="hint" style="margin-top:8px">Ranked by structure until live runs exist.</p>`;
+  } else if (!["queued", "running"].includes(s.state)) {
+    left += `<h3>Score breakdown</h3><p class="hint">No result for this skill yet.</p>`;
   }
-  body += `<h3>Live performance</h3><p class="hint">Not evaluated. ${esc(s.live.reason)}</p>`;
+
   if (e) {
-    body += `<h3>Evaluation context</h3><dl class="kv">
-      <dt>Commit</dt><dd><code>${esc(e.source.commit)}</code></dd>
-      <dt>Content digest</dt><dd><code>${esc(e.source.tree_digest.slice(0, 23))}…</code></dd>
-      <dt>Evaluator</dt><dd>SkillEvaluator ${esc(e.evaluator.version)} (<code>${esc(e.evaluator.commit.slice(0, 12))}</code>)</dd>
-      <dt>Mode</dt><dd>${esc(e.mode)} — no agent, no model, no test cases</dd>
-      <dt>Run</dt><dd>${esc(e.started_at)} · ${esc(e.duration_s)} s · cost $${(e.cost_usd ?? 0).toFixed(2)}</dd>
-      <dt>Reports</dt><dd>${Object.entries(e.reports || {}).map(([k, v]) => `<a href="${esc(v)}" target="_blank" rel="noopener">${k}</a>`).join(" · ") || "—"}</dd></dl>`;
+    rightCol += `<h3>Evaluation</h3><dl class="kv">
+      <dt>Commit</dt><dd>${esc(short(e.source.commit))}</dd>
+      <dt>Evaluator</dt><dd>SkillEvaluator ${esc(e.evaluator.version)}</dd>
+      <dt>Mode</dt><dd>${esc(e.mode)}, no agent or model</dd>
+      <dt>Cases</dt><dd>None (static)</dd>
+      <dt>Runtime</dt><dd>${esc(e.duration_s)} s</dd>
+      <dt>Cost</dt><dd>$${(e.cost_usd ?? 0).toFixed(2)}</dd>
+      <dt>Evaluated</dt><dd>${esc(day(e.started_at))}</dd>
+      <dt>Category</dt><dd>${esc(catLabel(s.category))}</dd></dl>`;
+    const links = [`<a href="${esc(e.source.tree_url)}" target="_blank" rel="noopener">Source at ${esc(short(e.source.commit))}</a>`];
+    for (const [k, v] of Object.entries(e.reports || {})) links.push(`<a href="${esc(v)}" target="_blank" rel="noopener">Full report (${esc(k)})</a>`);
+    links.push(`<a href="/docs/METHODOLOGY.md">How scores work</a>`);
+    rightCol += `<div class="links">${links.join("")}</div>`;
+    if (t1) {
+      rightCol += `<details><summary>All static checks</summary><ul class="checks">${t1.checks.map((c) => `<li><span>${esc(c.name)}</span>${checkStatus(c)}</li>`).join("")}</ul>
+        <p class="hint" style="margin-top:8px">Schema &amp; Repository Governance fails for most third-party skills, because the default policy treats a missing metadata.author as high severity. It is shown but not ranked.</p></details>`;
+    }
+    if (s.history && s.history.length > 1) {
+      rightCol += `<details><summary>History</summary><ul class="checks">${s.history.map((h) => `<li><span class="mono">${esc(short(h.commit))} · ${esc(day(h.started_at))}</span>${h.score != null ? `<span class="mono">${h.score.toFixed(1)}</span>` : status(h.status)}</li>`).join("")}</ul></details>`;
+    }
+  } else {
+    rightCol += `<h3>Source</h3><div class="links"><a href="https://github.com/${esc(s.repo)}" target="_blank" rel="noopener">${esc(s.repo)}</a></div>`;
   }
-  if (s.install && e && e.status === "completed") {
-    body += `<h3>Install (Claude Code)</h3><pre>${esc(s.install.claude_code)}</pre><p class="hint">Verified: ${esc(s.install.verified)}. Pin to the commit above for the evaluated version.</p>`;
+  return `${lead}<div>${left}</div><div>${rightCol}</div>`;
+}
+
+function checkStatus(c) {
+  const map = { passed: ["passed", "Passed"], incomplete: ["inconclusive", "Incomplete"], skipped: ["unknown", "Skipped"] };
+  const [cls, label] = map[c.status] || ["failed", "Failed"];
+  return status(cls, label + (c.incomplete.length ? ` (${c.incomplete.join(", ")})` : ""));
+}
+
+async function fetchDetail(id, quiet) {
+  try { state.detail = await api(`/api/skills/${encodeURIComponent(id)}`); }
+  catch (err) { if (!quiet) state.detail = null; }
+}
+
+async function toggle(id) {
+  if (state.openId === id) {
+    state.openId = null; state.detail = null;
+    history.replaceState(null, "", "/");
+    renderBoard();
+    return;
   }
-  if (s.history && s.history.length > 1) {
-    body += `<h3>History</h3><ul class="checks">${s.history.map((h) => `<li><span><code>${esc(h.commit.slice(0, 10))}</code> ${esc(h.started_at)}</span><span>${h.score != null ? h.score.toFixed(1) : esc(h.status)}</span></li>`).join("")}</ul>`;
-  }
-  return body;
-}
-
-function checkPill(c) {
-  const cls = c.status === "passed" ? "completed" : c.status === "incomplete" ? "queued" : c.status === "skipped" ? "na" : "failed";
-  const extra = c.incomplete.length ? ` · ${c.incomplete.join(", ")} incomplete` : "";
-  return `<span class="pill s-${cls}">${esc(c.status + extra)}</span>`;
-}
-
-function secHtml(t1) {
-  const sec = t1.security;
-  if (!sec) return `<p class="hint">Not available for this evaluation.</p>`;
-  const inc = t1.checks.filter((c) => c.incomplete.length && c.name === "Security Scan").length;
-  if (t1.scanner_errors && t1.scanner_errors.length) return `<p class="err">A security scanner crashed during this run, so security findings are incomplete and not shown as counts. (${esc(t1.scanner_errors[0])})</p>`;
-  const list = sec.top.length ? `<ul class="checks">${sec.top.map((f) => `<li><span>${esc(f.title)}${f.count > 1 ? ` <span class="hint">×${f.count}</span>` : ""}</span><span class="sev"><span class="${f.severity[0]}">${esc(f.severity)}</span></span></li>`).join("")}</ul>` : `<p class="hint">No findings from security scanners.</p>`;
-  return list + `<p class="hint">From SkillSpector, Gitleaks, Bandit/Semgrep, PII, dependency and Unicode scanners. Findings are static pattern matches and need human judgement; they are not confirmed vulnerabilities.${inc ? " SkillSpector reported partial analysis for this skill (often because code samples mention example file names it cannot resolve)." : ""}</p>`;
-}
-
-async function refreshDetail(id, quiet) {
-  try {
-    const s = await api(`/api/skills/${encodeURIComponent(id)}`);
-    $("#detail-body").innerHTML = detailHtml(s);
-  } catch (err) { if (!quiet) $("#detail-body").innerHTML = `<p class="err">${esc(err.message)}</p>`; }
-}
-
-function openDetail(id) {
-  state.openId = id;
+  state.openId = id; state.detail = null;
   history.replaceState(null, "", `/s/${encodeURIComponent(id)}`);
-  $("#detail-body").innerHTML = `<p class="muted">Loading…</p>`;
-  $("#detail").showModal();
-  refreshDetail(id);
+  renderBoard();
+  await fetchDetail(id);
+  renderBoard();
 }
 
-// --- Add skill flow
-function resetAdd() {
+// ---------------------------------------------------------------- add a skill, in place
+
+function showAdd(on) {
+  $("#add").hidden = !on;
+  $("#add-btn").hidden = on;
+  $("#add-btn").setAttribute("aria-expanded", String(on));
   state.found = null;
-  $("#found").hidden = true; $("#add-err").hidden = true; $("#url").value = "";
+  $("#found").hidden = true; $("#add-err").hidden = true;
+  if (on) { $("#url").value = ""; $("#url").focus(); } else { $("#add-btn").focus(); }
+}
+
+function addError(msg) { $("#add-err").textContent = msg; $("#add-err").hidden = false; }
+
+function updateEvaluateLabel() {
+  const n = document.querySelectorAll("#found-list input:checked").length;
+  const b = $("#submit-skills");
+  b.textContent = n === 1 ? "Evaluate 1 skill" : `Evaluate ${n} skills`;
+  b.disabled = n === 0;
 }
 
 async function lookup(ev) {
   ev.preventDefault();
   const btn = $("#lookup");
-  btn.disabled = true; btn.textContent = "Looking…"; $("#add-err").hidden = true; $("#found").hidden = true;
+  let url = $("#url").value.trim();
+  if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+  btn.disabled = true; btn.textContent = "Looking"; $("#add-err").hidden = true; $("#found").hidden = true;
   try {
-    const res = await api("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url: $("#url").value }) });
+    const res = await api("/api/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url }) });
     state.found = res;
-    if (!res.skills.length) throw new Error("No SKILL.md found in this repository.");
-    $("#found-meta").textContent = `${res.skills.length} skill${res.skills.length > 1 ? "s" : ""} in ${res.repo} @ ${res.commit.slice(0, 10)}. Choose up to ${state.meta.limits.skills_per_submission}.`;
-    $("#found-list").innerHTML = res.skills.map((s, i) => `<li><input type="checkbox" id="sk${i}" value="${esc(s.path)}" ${res.skills.length === 1 ? "checked" : ""}>
-      <label for="sk${i}" style="margin:0;font-weight:500">${esc(s.name)} ${s.listed ? '<span class="hint">· already listed (re-evaluates if changed)</span>' : ""}<small>${esc(s.path)}</small><small>${esc(s.description.slice(0, 140))}</small></label></li>`).join("");
+    if (!res.skills.length) throw new Error("No SKILL.md found in this repository");
+    const n = res.skills.length;
+    $("#found-meta").textContent = `${n} skill${n > 1 ? "s" : ""} found at ${short(res.commit)}. Choose up to ${state.meta.limits.skills_per_submission}`;
+    $("#found-list").innerHTML = res.skills.map((s, i) => `<li><input type="checkbox" id="sk${i}" value="${esc(s.path)}" ${n === 1 ? "checked" : ""}>
+      <label for="sk${i}">${esc(s.name)}<span class="mono">${esc(s.path)}</span>${s.listed ? `<span class="hint">Already listed, re-evaluated only if changed</span>` : ""}</label></li>`).join("");
     $("#found").hidden = false;
+    updateEvaluateLabel();
   } catch (err) {
-    $("#add-err").textContent = err.message; $("#add-err").hidden = false;
+    addError(err.message);
   } finally { btn.disabled = false; btn.textContent = "Find skills"; }
 }
 
 async function submitSkills() {
   const paths = [...document.querySelectorAll("#found-list input:checked")].map((i) => i.value);
-  if (!paths.length) { $("#add-err").textContent = "Choose at least one skill."; $("#add-err").hidden = false; return; }
+  if (!paths.length) return addError("Choose at least one skill");
   const btn = $("#submit-skills"); btn.disabled = true;
   try {
     const res = await api("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: state.found.repo, paths, category: $("#cat").value }) });
-    $("#add").close(); resetAdd();
-    await load();
+    showAdd(false);
+    state.tab = "all"; state.q = ""; $("#q").value = "";
     const first = res.submitted.find((x) => x.skill_id);
-    if (first) openDetail(first.skill_id);
+    if (first) { state.openId = first.skill_id; history.replaceState(null, "", `/s/${encodeURIComponent(first.skill_id)}`); }
+    await load();
+    const li = first && document.querySelector(`#board li[data-id="${CSS.escape(first.skill_id)}"]`);
+    if (li) li.scrollIntoView({ block: "center" });
   } catch (err) {
-    $("#add-err").textContent = err.message; $("#add-err").hidden = false;
+    addError(err.message);
   } finally { btn.disabled = false; }
 }
 
+// ---------------------------------------------------------------- init
+
 async function init() {
   state.meta = await api("/api/meta");
-  $("#cat").innerHTML = state.meta.categories.map((c) => `<option value="${c.id}" ${c.id === "other" ? "selected" : ""}>${esc(c.label)}</option>`).join("");
+  $("#cat").innerHTML = state.meta.categories.map((c) => `<option value="${esc(c.id)}" ${c.id === "other" ? "selected" : ""}>${esc(c.label)}</option>`).join("");
   $("#q").addEventListener("input", (e) => { state.q = e.target.value; renderBoard(); });
+  $("#tabs").addEventListener("change", (e) => { if (e.target.id === "more") { state.tab = e.target.value || "all"; renderTabs(); renderBoard(); } });
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) { state.tab = b.dataset.tab; renderTabs(); renderBoard(); } });
-  $("#board tbody").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) openDetail(tr.dataset.id); });
-  $("#board tbody").addEventListener("keydown", (e) => { if (e.key === "Enter") { const tr = e.target.closest("tr[data-id]"); if (tr) openDetail(tr.dataset.id); } });
-  $("#add-btn").addEventListener("click", () => { resetAdd(); $("#add").showModal(); $("#url").focus(); });
-  $("#add-form").addEventListener("submit", lookup);
+  $("#board").addEventListener("click", (e) => { const b = e.target.closest("button.row"); if (b) toggle(b.dataset.id); });
+  $("#add-btn").addEventListener("click", () => showAdd(true));
+  $("#add-cancel").addEventListener("click", () => showAdd(false));
+  $("#add").addEventListener("submit", lookup);
+  $("#add").addEventListener("keydown", (e) => { if (e.key === "Escape") showAdd(false); });
+  $("#found-list").addEventListener("change", updateEvaluateLabel);
   $("#submit-skills").addEventListener("click", submitSkills);
-  document.addEventListener("click", (e) => { if (e.target.matches("[data-close]")) e.target.closest("dialog").close(); });
-  $("#detail").addEventListener("close", () => { state.openId = null; history.replaceState(null, "", "/"); });
-  for (const d of document.querySelectorAll("dialog")) d.addEventListener("click", (e) => { if (e.target === d) d.close(); });
-  await load();
   const m = location.pathname.match(/^\/s\/(.+)$/);
-  if (m) openDetail(decodeURIComponent(m[1]));
+  if (m) state.openId = decodeURIComponent(m[1]);
+  await load();
+  if (state.openId) document.querySelector(`#board li[data-id="${CSS.escape(state.openId)}"]`)?.scrollIntoView({ block: "center" });
 }
-init().catch((e) => { document.body.insertAdjacentHTML("beforeend", `<p class="err" style="text-align:center">${esc(e.message)}</p>`); });
+init().catch((e) => { document.body.insertAdjacentHTML("beforeend", `<p class="err">${esc(e.message)}</p>`); });
