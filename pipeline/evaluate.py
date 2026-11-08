@@ -342,44 +342,127 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
     return rec
 
 
-def sanitize_report(report: dict) -> dict:
-    """Public copy of a report: drop matched source lines so scanner hits (possible credentials, PII)
-    are never re-published. Findings keep file, line number, rule and severity."""
+SCANNER_VALIDATORS = {"PII Scan", "Secrets Detection"}
+SCANNER_CATEGORIES = {"PII", "SECRET"}
+SENSITIVE_TITLE = re.compile(r"secret|credential|token|key|password|exfil|email|phone", re.I)
+MATCHED_TEXT_KEYS = {"line_content", "match", "matched_value", "secret", "snippet", "evidence", "context"}
+# Inside a PII Scan / Secrets Detection dict, only these string fields are published as they are; any other string
+# (a new field a future SkillEvaluator adds, say) is replaced, so the sanitizer fails closed. `message` and the legacy
+# lists are cut separately, keeping their titles.
+SCANNER_SAFE_KEYS = {
+    "status",
+    "validator",
+    "description",
+    "category",
+    "severity",
+    "confidence",
+    "check",
+    "check_id",
+    "check_name",
+    "finding_id",
+    "occurrence_id",
+    "file",
+    "file_path",
+    "suggestion",
+    "reason",
+    "producer",
+    "skill_name",
+    "skill_digest",
+    "skill_digest_algorithm",
+    "evidence_sha256",
+    "gitleaks",
+}
+LEGACY_TAG = re.compile(r"^\[([A-Z_]+)-[A-Z]+\]")
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
+OMITTED = ": [matched text omitted]"
 
-    def walk(o):
+
+def _cut(message: str) -> str:
+    """Keep a scanner message's title ("Non-placeholder email address") and drop what it matched."""
+    title = message.split(":")[0]
+    return title + (OMITTED if ":" in message else "")
+
+
+def _scanner_owned(d: dict, inherited: bool) -> bool:
+    names = [d.get("validator"), *(d.get("validators") or [])]
+    validators = {n for n in names if isinstance(n, str)}
+    return (
+        inherited
+        or bool(validators & SCANNER_VALIDATORS)
+        or d.get("category") in SCANNER_CATEGORIES
+        or d.get("check_name") in ("emails", "phones")
+    )
+
+
+def sanitize_report(report: dict) -> dict:
+    """Public copy of a report: drop matched source text so scanner hits (possible credentials, PII) are never
+    re-published. Findings keep file, line number, rule and severity.
+
+    SkillEvaluator copies a finding's message into several places (findings, finding_groups, occurrences, legacy
+    errors/warnings/messages), so this redacts by what a value is, at every depth, not by where it sits. As a
+    backstop, anything shaped like an email address is replaced wherever it appears. Idempotent."""
+
+    def text(s: str) -> str:
+        s = s.replace(str(ROOT), "").replace(str(Path.home()), "~")
+        return EMAIL.sub("[email omitted]", s)
+
+    def finding(s: str, owned: bool) -> str:
+        """A finding message, bare or in legacy form ("[PII-HIGH] title: matched text in file:line")."""
+        tag = LEGACY_TAG.match(s)
+        prefix, body = (tag.group(0) + " ", s[tag.end() :].strip()) if tag else ("", s)
+        sensitive = owned or (tag and tag.group(1) in SCANNER_CATEGORIES) or SENSITIVE_TITLE.search(body.split(":")[0])
+        if sensitive and not body.endswith(OMITTED):
+            body = _cut(body)
+        return text(prefix + body)
+
+    def walk(o, scanner=False):
         if isinstance(o, dict):
-            return {
-                k: (
-                    "[omitted]"
-                    if k in ("line_content", "match", "secret", "snippet", "evidence", "context")
-                    and isinstance(v, str)
-                    and v
-                    else walk(v)
-                )
-                for k, v in o.items()
-            }
+            owned = _scanner_owned(o, scanner)
+            out = {}
+            for k, v in o.items():
+                if k == "message" and isinstance(v, str):
+                    out[k] = finding(v, owned)
+                elif isinstance(v, str) and v and (k in MATCHED_TEXT_KEYS or (owned and k not in SCANNER_SAFE_KEYS)):
+                    out[k] = "[omitted]"
+                elif k in ("errors", "warnings", "messages") and isinstance(v, list):
+                    out[k] = [finding(x, owned) if isinstance(x, str) else walk(x, owned) for x in v]
+                elif owned and isinstance(v, list) and k != "validators":  # unknown string lists fail closed too
+                    out[k] = ["[omitted]" if isinstance(x, str) and x else walk(x, owned) for x in v]
+                else:
+                    out[k] = walk(v, owned)
+            return out
         if isinstance(o, list):
-            return [walk(x) for x in o]
+            return [walk(x, scanner) for x in o]
         if isinstance(o, str):
-            return o.replace(str(ROOT), "").replace(str(Path.home()), "~")
+            return text(o)
         return o
 
-    pub = walk(report)
-    for r in pub.get("results", []):
-        for f in r.get("findings") or []:
-            m = f.get("message")
-            if isinstance(m, str) and (
-                r.get("validator") in ("PII Scan", "Secrets Detection")
-                or re.search(r"secret|credential|token|key|password|exfil", m.split(":")[0], re.I)
-            ):
-                f["message"] = m.split(":")[0] + (": [matched text omitted]" if ":" in m else "")
-    return pub
+    return walk(report)
 
 
 def write_public(out: Path) -> None:
     rp = out / "skillevaluator-tier1.json"
     if rp.is_file():
         (out / "report.public.json").write_text(json.dumps(sanitize_report(json.loads(rp.read_text())), indent=1))
+
+
+def resanitize_public(root: Path) -> int:
+    """Re-run the sanitizer over every published report.public.json under root (it is idempotent), so a deployment
+    seeded by an older sanitizer is brought up to date in place."""
+    n = 0
+    for p in root.glob("*/*/report.public.json"):
+        try:
+            old = json.loads(p.read_text())
+            new = sanitize_report(old)
+        except (OSError, ValueError) as e:
+            # Unreadable or truncated: it can't be checked, so it isn't served. The server stays up.
+            print(f"removing unreadable public report {p}: {type(e).__name__}", file=sys.stderr)
+            p.unlink(missing_ok=True)
+            continue
+        if new != old:
+            p.write_text(json.dumps(new, indent=1))
+            n += 1
+    return n
 
 
 def resummarize() -> int:
