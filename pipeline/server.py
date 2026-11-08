@@ -447,6 +447,7 @@ def bootstrap():
                 t.extractall(ev.REPORTS, members=members, filter="data")
             except TypeError:  # Python < 3.11.4 has no filter; members are already vetted (regular files, no ..)
                 t.extractall(ev.REPORTS, members=members)
+    ev.resanitize_public(ev.REPORTS)
 
 
 def main():
