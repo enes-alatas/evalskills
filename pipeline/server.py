@@ -32,6 +32,8 @@ SUBMISSIONS_PER_HOUR_PER_CLIENT = int(os.environ.get("SUBMISSIONS_PER_HOUR", "20
 MAX_BODY = 20_000
 DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30"))
 
+CACHE_MAX_AGE_HOURS = float(os.environ.get("CACHE_MAX_AGE_HOURS", "6"))
+CACHE_MAX_REPOS = int(os.environ.get("CACHE_MAX_REPOS", "40"))  # x 300 MB per clone bounds the cache volume
 GIT_LOCK = ev.GIT_LOCK
 WAKE = threading.Event()
 
@@ -209,10 +211,28 @@ def skill_row(c, s, detail=False):
 # ---------------------------------------------------------------- worker
 
 
+def prune_clones():
+    """Bound the clone cache, sparing every repo a queued or running job still needs. Takes GIT_LOCK."""
+    with db() as c:
+        keep = {
+            r["repo"]
+            for r in c.execute(
+                "SELECT DISTINCT s.repo FROM jobs j JOIN skills s ON s.id = j.skill_id "
+                "WHERE j.status IN ('queued','running')"
+            )
+        }
+    with GIT_LOCK:
+        return ev.prune_cache(CACHE_MAX_AGE_HOURS * 3600, CACHE_MAX_REPOS, keep)
+
+
 def worker():
     while True:
         WAKE.wait(timeout=5)
         WAKE.clear()
+        try:
+            prune_clones()
+        except Exception:  # noqa: BLE001 -- pruning must never stop the queue
+            traceback.print_exc()
         while True:
             with db() as c:
                 job = c.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
@@ -358,6 +378,10 @@ class H(BaseHTTPRequestHandler):
             with db() as c:
                 if not rate_ok(c, client, "discover", DISCOVERIES_PER_HOUR_PER_CLIENT):
                     return self.send(429, {"error": "Too many lookups; try again later."})
+            try:
+                prune_clones()  # make room before this lookup adds a clone
+            except Exception:  # noqa: BLE001 -- pruning must never block a lookup
+                traceback.print_exc()
             try:
                 with GIT_LOCK:
                     res = disc.discover(str(b.get("url", ""))[:300])

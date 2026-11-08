@@ -75,3 +75,5 @@ reused: resubmitting the same skill runs it again.
 * Limits: repositories up to 300 MB (checked with the GitHub API before cloning, and again on disk after cloning; when
   the API can't give the size, the lookup is refused rather than cloned), 10 skills per submission, 20 submissions and 30 lookups per client per hour,
   100 queued jobs, and a 600 s timeout per evaluation.
+* Cloned repositories are deleted after 6 hours without use, and at most 40 are kept (least recently used go first).
+  A clone that a queued or running job needs is never deleted. After a deletion, a submission needs a fresh lookup.

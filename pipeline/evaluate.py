@@ -122,7 +122,29 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
     if kb > MAX_REPO_KB:
         shutil.rmtree(d, ignore_errors=True)
         raise RepoTooLarge(f"Repository too large ({kb // 1024} MB > {MAX_REPO_KB // 1024} MB)")
+    os.utime(d)  # last use, for prune_cache()
     return d, sh(["git", "-C", str(d), "rev-parse", "HEAD"])
+
+
+def prune_cache(max_age_s: float, max_repos: int, keep: set[str]) -> list[str]:
+    """Delete clones not used for max_age_s, then the least recently used ones beyond max_repos. Clones named in keep
+    (repo slugs a queued or running job needs) are never deleted. Call under GIT_LOCK. Returns the slugs removed."""
+    if not CACHE.is_dir():
+        return []
+    keep_dirs = {r.replace("/", "__") for r in keep}
+    clones = sorted(
+        (d for d in CACHE.iterdir() if d.is_dir() and not d.is_symlink() and d.name not in keep_dirs),
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,  # newest first
+    )
+    now = time.time()
+    room = max(0, max_repos - len(keep_dirs))
+    removed = []
+    for i, d in enumerate(clones):
+        if now - d.stat().st_mtime > max_age_s or i >= room:
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d.name.replace("__", "/", 1))
+    return removed
 
 
 @functools.lru_cache(maxsize=1)
