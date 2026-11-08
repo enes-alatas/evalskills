@@ -2,6 +2,9 @@
 
 Date: 2026-11-08 · Status: proposed (needs Enes's acceptance on #6). Evidence: experiments E1–E6 in `docs/EXPERIMENT_LOG.md`
 
+**Amendment (2026-11-08, #31):** Accepted as written by Enes on 2026-11-08, so the status is now accepted. The
+noise band in decision 1 is delivered in #47.
+
 ## Context
 SkillEvaluator gives three different kinds of evidence. Tier 1 gives a deterministic structural quality score, and
 static security scanner findings. Tier 3 gives a live with-skill vs baseline result. The experiments on 123 skills
