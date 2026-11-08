@@ -57,7 +57,7 @@ Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBM
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/skills` | Leaderboard rows (latest evaluation + job state) |
-| GET | `/api/skills/{repo}:{path}` | Detail: score breakdown, context, history, install |
+| GET | `/api/skills/{repo}:{path}` | Detail: score breakdown, context, history |
 | POST | `/api/discover` `{url}` | List skills in a repo |
 | POST | `/api/submit` `{repo, paths[], category}` | Queue evaluations |
 | GET | `/api/queue` | Active jobs |

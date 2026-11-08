@@ -202,18 +202,7 @@ def skill_row(c, s, detail=False):
             }
             for e in evs
         ]
-        row["install"] = install_hint(s)
     return row
-
-
-def install_hint(s):
-    # Verified only as "folder exists at this commit and contains SKILL.md" — the generic, agent-neutral install.
-    name = s["path"].rstrip("/").split("/")[-1] if s["path"] != "." else s["repo"].split("/")[1]
-    return {
-        "verified": "SKILL.md present at evaluated commit",
-        "claude_code": f"git clone --depth 1 https://github.com/{s['repo']} /tmp/skill-src && "
-        f"cp -r /tmp/skill-src/{s['path']} ~/.claude/skills/{name}",
-    }
 
 
 # ---------------------------------------------------------------- worker
