@@ -21,6 +21,8 @@ import evaluate as ev  # noqa: E402
 ROOT = ev.ROOT
 DB_PATH = ROOT / "data" / "inventory.db"
 STATIC = ROOT / "web"
+# Fixed allowlist: font files are served by exact name, never by a path built from the request.
+FONTS = {"Geist-Regular.woff2", "Geist-Medium.woff2", "GeistMono-Regular.woff2", "OFL.txt"}
 CATEGORIES = json.loads((ROOT / "catalog" / "categories.json").read_text())
 
 # Limits (env-overridable)
@@ -296,6 +298,9 @@ class H(BaseHTTPRequestHandler):
         if p in ("/app.js", "/app.css"):
             ct = "text/javascript" if p.endswith(".js") else "text/css"
             return self.send(200, (STATIC / p[1:]).read_bytes(), ct + "; charset=utf-8")
+        if p.startswith("/fonts/") and p[7:] in FONTS:
+            ct = "text/plain; charset=utf-8" if p.endswith(".txt") else "font/woff2"
+            return self.send(200, (STATIC / "fonts" / p[7:]).read_bytes(), ct)
         if p.startswith("/docs/") and p.endswith(".md"):
             f = (ROOT / "docs" / p[6:]).resolve()
             if f.parent == (ROOT / "docs").resolve() and f.is_file():
