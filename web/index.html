@@ -3,63 +3,50 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>evalskills</title>
+<link rel="preload" href="/fonts/Geist-Regular.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">
-    <h1>evalskills</h1>
-    <p class="sub">Public agent skills, checked with NVIDIA SkillEvaluator. <a href="/docs/METHODOLOGY.md">How scores work</a></p>
-  </div>
-  <button id="add-btn" class="primary">Add skill</button>
-</header>
+<main class="col">
+  <header class="head">
+    <span class="logo">evalskills</span>
+    <h1>Evaluate agent skills</h1>
+    <p class="lede">Results from NVIDIA SkillEvaluator, pinned to the commit tested</p>
 
-<main>
-  <div class="controls">
-    <input id="q" type="search" placeholder="Search skills, repos, descriptions" aria-label="Search">
-    <nav id="tabs" class="tabs" role="tablist"></nav>
-  </div>
-  <p class="notice" id="notice">
-    Scores below are <b>structural quality</b> from static checks (no agent was run).
-    Differences of 2–3 points are within format noise. Live performance is shown separately and is not yet available on this deployment.
-  </p>
-  <div class="table-wrap">
-    <table id="board">
-      <thead><tr>
-        <th class="rank">#</th><th>Skill</th><th class="num">Structure</th>
-        <th class="hide-sm">Security findings</th><th class="hide-sm">Live</th><th class="hide-sm">Status</th>
-      </tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <p id="empty" class="muted" hidden>No skills match.</p>
-</main>
+    <button id="add-btn" class="primary big" aria-expanded="false" aria-controls="add"><span aria-hidden="true">+</span> Add a skill</button>
 
-<dialog id="detail" class="sheet"><div id="detail-body"></div></dialog>
-
-<dialog id="add" class="sheet narrow">
-  <form id="add-form" method="dialog">
-    <h2>Add a skill</h2>
-    <label for="url">Public GitHub repository URL</label>
-    <div class="row">
-      <input id="url" name="url" type="url" required placeholder="https://github.com/owner/repo">
-      <button id="lookup" type="submit" class="primary">Find skills</button>
-    </div>
-    <p class="err" id="add-err" hidden></p>
-    <div id="found" hidden>
-      <p class="muted" id="found-meta"></p>
-      <ul id="found-list" class="checklist"></ul>
-      <label for="cat">Category</label>
-      <select id="cat"></select>
-      <div class="actions">
-        <button type="button" id="submit-skills" class="primary">Evaluate selected</button>
+    <form id="add" class="add" hidden>
+      <label for="url" class="sr">Public GitHub repository URL</label>
+      <div class="bar">
+        <input id="url" name="url" type="text" required autocomplete="off" spellcheck="false" placeholder="github.com/owner/repo">
+        <button id="lookup" type="submit" class="secondary">Find skills</button>
       </div>
-    </div>
-    <button type="button" class="close" data-close aria-label="Close">×</button>
-  </form>
-</dialog>
+      <p class="err" id="add-err" hidden></p>
+      <div id="found" hidden>
+        <ul id="found-list" class="picks"></ul>
+        <p class="hint" id="found-meta"></p>
+        <div class="pick-cat">
+          <label for="cat">Category</label>
+          <select id="cat"></select>
+        </div>
+        <button type="button" id="submit-skills" class="primary">Evaluate</button>
+      </div>
+      <button type="button" id="add-cancel" class="link">Cancel</button>
+    </form>
+  </header>
 
+  <section aria-label="Leaderboard">
+    <div class="tools">
+      <nav id="tabs" class="tabs" role="tablist" aria-label="Categories"></nav>
+      <input id="q" type="search" placeholder="Search" aria-label="Search skills">
+    </div>
+    <p class="note" id="notice">Scores are structural quality from static checks. Live runs are not available yet. <a href="/docs/METHODOLOGY.md">How scores work</a></p>
+    <ol id="board" class="board"></ol>
+    <p id="empty" class="hint center" hidden>No skills match</p>
+  </section>
+</main>
 <script src="/app.js"></script>
 </body>
 </html>
