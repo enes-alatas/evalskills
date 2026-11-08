@@ -68,8 +68,28 @@ def git_env():
     return env
 
 
+MAX_REPO_KB = 300_000  # refuse repos over ~300 MB
+
+
+class RepoTooLarge(ValueError):  # the worker shows a ValueError as "unsupported"
+    pass
+
+
+def dir_kb(d: Path) -> int:
+    """On-disk size of a checkout in KB, without following symlinks."""
+    total = 0
+    for root, _dirs, files in os.walk(d):
+        for f in files:
+            try:
+                total += os.lstat(os.path.join(root, f)).st_size
+            except OSError:
+                pass
+    return total // 1024
+
+
 def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
-    """Shallow-clone (or refresh) repo; return (dir, exact commit sha)."""
+    """Shallow-clone (or refresh) repo; return (dir, exact commit sha). A checkout over MAX_REPO_KB is deleted and
+    refused, whatever the GitHub API said about its size."""
     if not REPO_RE.match(repo):
         raise ValueError(f"bad repo slug: {repo}")
     d = CACHE / repo.replace("/", "__")
@@ -95,6 +115,10 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
     else:
         sh(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin", ref or "HEAD"], env=env, timeout=300)
         sh(["git", "-C", str(d), "reset", "-q", "--hard", "FETCH_HEAD"], env=env)
+    kb = dir_kb(d)
+    if kb > MAX_REPO_KB:
+        shutil.rmtree(d, ignore_errors=True)
+        raise RepoTooLarge(f"Repository too large ({kb // 1024} MB > {MAX_REPO_KB // 1024} MB)")
     return d, sh(["git", "-C", str(d), "rev-parse", "HEAD"])
 
 
