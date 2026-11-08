@@ -66,7 +66,7 @@ Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBM
 
 Only static Tier 1 runs live. It reads the skill and runs no skill code. Live Tier 3 (the agent runs each task with
 and without the skill) is blocked on two things: a model-provider key, and the isolated eval sandbox (a dedicated
-Docker daemon with gVisor, egress limited to a model gateway). See `docs/DESIGN-DRAFT.md`. Until then, live
+Docker daemon with gVisor, egress limited to a model gateway). See ADR-0003 in `docs/adr/`. Until then, live
 performance shows as "not run" and is never estimated.
 
 ## Deploy (static only, not yet deployed)
@@ -74,7 +74,7 @@ performance shows as "not run" and is never estimated.
 `deploy/Dockerfile` pins SkillEvaluator, and `deploy/compose.yaml` runs the app as one hardened container behind a
 TLS reverse proxy. Copy `deploy/env.example` to `deploy/.env`, then run
 `docker compose -f deploy/compose.yaml up -d --build`. Untrusted skill code never executes on the app host. The live
-sandbox runs separately, as described in `docs/DESIGN-DRAFT.md`. Hosting notes: `docs/HOSTING.md`.
+sandbox runs separately, as described in `docs/ARCHITECTURE.md`. Hosting notes: `docs/HOSTING.md`.
 
 ## Contributing
 
