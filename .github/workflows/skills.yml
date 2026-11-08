@@ -1,0 +1,61 @@
+# SkillEvaluator Tier 1 over this repo's own skills (issue #10). Runs only when a skill, the gate or this workflow
+# changes. The image is the one SkillEvaluator 0.8.0's CI bundle names (ci/bundles/0.8.0/skill-checks.yml), pinned by
+# digest; Dependabot does not move a digest inside `run:`, so a bump is by hand. It is pulled anonymously and runs
+# with no network, no capabilities, a read-only root and a read-only view of the tree; no secret is passed. We call
+# the image ourselves instead of SkillEvaluator's reusable workflow, so no third-party workflow code runs here and we
+# can add --network none. The container's exit code is not the verdict: scripts/skill_gate.py is.
+name: skills
+
+on:
+  pull_request:
+    paths: [".claude/skills/**", "scripts/skill_gate.py", ".github/workflows/skills.yml"]
+  push:
+    branches: [main]
+    paths: [".claude/skills/**", "scripts/skill_gate.py", ".github/workflows/skills.yml"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skills-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tier1:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+      SKILL_PATHS: .claude/skills
+      MIN_SCORE: "80"
+      LLM_ENABLED: "false"
+      SCAN_MODE: all
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: SkillEvaluator tier 1, contained
+        run: |
+          set -euo pipefail
+          reports="$RUNNER_TEMP/skill-reports"
+          log="$RUNNER_TEMP/skill-run.log"
+          mkdir -p "$reports" "$RUNNER_TEMP/anonymous-docker-config"
+          docker --config "$RUNNER_TEMP/anonymous-docker-config" pull -q "$IMAGE"
+          docker run --rm --network none --user "$(id -u):$(id -g)" \
+            --read-only --tmpfs /tmp:rw,nosuid,noexec,size=1g \
+            --tmpfs /audit-tmp:rw,nosuid,noexec,mode=1777,size=1g --env TMPDIR=/audit-tmp \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/workspace,readonly" \
+            --mount "type=bind,src=$reports,dst=/reports" \
+            --env SKILL_PATHS --env MIN_SCORE --env LLM_ENABLED --env SCAN_MODE --env GITHUB_ACTIONS \
+            "$IMAGE" > "$log" 2>&1 || true
+          if ! python3 -I scripts/skill_gate.py "$reports" .claude/skills "$GITHUB_STEP_SUMMARY"; then
+            # The evaluator's output can quote skill text; stop it from being read as workflow commands.
+            stop=$(openssl rand -hex 16)
+            echo "SkillEvaluator's own output:"
+            echo "::stop-commands::$stop"
+            cat "$log"
+            echo "::$stop::"
+            echo "A 'scanner crashed' line is SkillSpector failing transiently (about 1 run in 20): re-run the job."
+            exit 1
+          fi
