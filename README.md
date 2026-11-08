@@ -50,7 +50,10 @@ python3 -I pipeline/server.py --port 8080
 
 Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBMISSIONS_PER_HOUR`,
 `DISCOVERIES_PER_HOUR` and `TIER1_TIMEOUT`. Put the server behind a TLS reverse proxy that sets
-`X-Forwarded-For` for per-client rate limits.
+`X-Forwarded-For` for per-client rate limits. The server believes that header only from `TRUSTED_PROXIES` (default:
+loopback only), and takes the entry `TRUSTED_PROXY_HOPS` (default 1) places from the right. **In a deployment, pin
+Caddy to a fixed address on the `web` network and set `TRUSTED_PROXIES` to it in `deploy/.env`.** If it is not set,
+the app sees every visitor as Caddy and they all share one rate-limit bucket.
 
 ## API
 
