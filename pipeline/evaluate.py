@@ -55,7 +55,10 @@ PROVIDER_VARS = {
 }
 
 GIT_LOCK = threading.RLock()  # guards the shared clone cache
-REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# GitHub's own shapes: an owner starts with a letter or digit (letters, digits, hyphens; at most 39); a repo name is
+# letters, digits, "_", "." and "-", at most 100, never "." or "..", and never starting with "-". \Z, not $, so a
+# trailing newline is refused too.
+REPO_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?\Z)(?!-)[A-Za-z0-9_.-]{1,100}\Z")
 
 
 def sh(cmd, **kw):
