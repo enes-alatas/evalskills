@@ -39,5 +39,6 @@ networks:
 
 volumes: { data: {}, reports: {}, cache: {}, uvcache: {} }
 
-# Phase 2 (live Tier 3) is deliberately NOT here: untrusted code must not execute on this host.
-# Trials go to a managed sandbox (TIER3_ENV_MODE=e2b|modal|daytona); see docs/HOSTING.md.
+# Phase 2 (live Tier 3) is deliberately NOT here: untrusted code never runs in this stack or on the main Docker
+# daemon. Trials run under gVisor on the separate docker-evals daemon (docs/adr/0003-gvisor-eval-daemon.md,
+# deploy/gvisor/). A managed sandbox such as E2B is only the fallback ADR-0003 names (docs/HOSTING.md).
