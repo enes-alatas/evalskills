@@ -1,16 +1,35 @@
-# Skill Inventory
+# evalskills
 
-A public leaderboard of agent skills, evaluated with [NVIDIA SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator).
+A small public leaderboard of AI-agent skills. Submit a public GitHub repository, pick its skills, and see how
+[NVIDIA SkillEvaluator](https://github.com/NVIDIA/SkillEvaluator) rates them, with each score labelled by what it
+actually measured.
 
 The pipeline: repository URL → skill discovery → evaluation queue → SkillEvaluator → stored results → leaderboard.
 
-* `pipeline/evaluate.py` evaluates one skill and appends a provenance record to `catalog/results.jsonl`. The full
-  reports go to `reports/`.
+## What is in the catalog today
+
+- **123 skills from 16 public repositories, 137 runs** (`catalog/results.jsonl`), all static Tier 1 (SkillEvaluator
+  0.8.0). The extra runs are repeat runs for the stability experiment.
+- Each run records the repository, skill path, exact commit, content digest, evaluator version and commit,
+  duration and status. Agent, model, test cases and baseline are recorded too, and are empty for static runs, which
+  use none. Cost is $0 because static runs make no model calls.
+- Sanitized reports (`report.public.json`, matched lines stripped) are in `catalog/public-reports.tar.gz`. Raw
+  reports stay local and are never committed.
+- What the scores mean, and do not mean: `docs/METHODOLOGY.md`. The experiments behind those choices:
+  `docs/EXPERIMENT_LOG.md`.
+
+## Layout
+
 * `pipeline/discover.py` finds `SKILL.md` folders in a public GitHub repository.
+* `pipeline/evaluate.py` evaluates one skill and appends a provenance record to `catalog/results.jsonl`. The full
+  reports go to `reports/` (gitignored).
 * `pipeline/server.py` is a stdlib HTTP server with a SQLite store (`data/`), a single evaluation worker, the API and
   the SPA.
+* `pipeline/tier3.py` prepares live Tier 3 runs on the shared category tasks (dry-run only until a sandbox and key
+  exist). `shared-tasks/` holds those tasks and their deterministic graders.
 * `web/` holds the single-page app (no build step).
-* `docs/METHODOLOGY.md` explains what scores mean. `docs/EXPERIMENT_LOG.md` covers the experiments behind that.
+* `deploy/` holds the static-only container (`Dockerfile`, `compose.yaml`) and the gVisor eval-daemon drafts
+  (`deploy/gvisor/`, unreviewed and untested).
 
 ## Setup
 
@@ -45,12 +64,26 @@ Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBM
 
 ## Current scope
 
-Only static Tier 1 runs live. Tier 3 (agent runs with and without the skill) needs a model-provider key and an
-isolated sandbox (Docker or Modal/E2B/Daytona). Neither is configured, so live performance shows "not run" and is
-never estimated.
+Only static Tier 1 runs live. It reads the skill and runs no skill code. Live Tier 3 (the agent runs each task with
+and without the skill) is blocked on two things: a model-provider key, and the isolated eval sandbox (a dedicated
+Docker daemon with gVisor, egress limited to a model gateway). See `docs/DESIGN-DRAFT.md`. Until then, live
+performance shows as "not run" and is never estimated.
 
-## Deploy (draft, not yet built: no Docker on the dev workstation)
+## Deploy (static only, not yet deployed)
 
-`deploy/Dockerfile` pins SkillEvaluator. `deploy/compose.yaml` runs the app on a Docker VM. Phase 1 only (static). Live Tier 3 must use a managed sandbox, never this host; see docs/HOSTING.md. The earlier `live`
-profile adds a separate Docker-in-Docker daemon for Tier 3 sandboxes, so the host socket is never mounted.
-Copy `deploy/env.example` to `deploy/.env`, then run `docker compose -f deploy/compose.yaml up -d --build`.
+`deploy/Dockerfile` pins SkillEvaluator, and `deploy/compose.yaml` runs the app as one hardened container behind a
+TLS reverse proxy. Copy `deploy/env.example` to `deploy/.env`, then run
+`docker compose -f deploy/compose.yaml up -d --build`. Untrusted skill code never executes on the app host. The live
+sandbox runs separately, as described in `docs/DESIGN-DRAFT.md`. Hosting notes: `docs/HOSTING.md`.
+
+## Contributing
+
+Read `AGENTS.md`, then `docs/CONVENTIONS.md`. Every change lands by PR, from a typed issue, with green CI. Before
+pushing:
+
+```bash
+ln -s ../../scripts/pre-commit .git/hooks/pre-commit   # once: secret scan on every commit (needs gitleaks 8.30.1)
+uvx ruff check . && uvx ruff format --check .
+python3 -m pytest -q
+scripts/secret-scan.sh
+```

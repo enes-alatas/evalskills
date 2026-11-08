@@ -1,6 +1,6 @@
-# How Skill Inventory scores skills
+# How evalskills scores skills
 
-Skill Inventory runs NVIDIA SkillEvaluator on public agent skills. It keeps three kinds of evidence separate and
+evalskills runs NVIDIA SkillEvaluator on public agent skills. It keeps three kinds of evidence separate and
 never combines them into a single number.
 
 ## 1. Structural quality (the ranking column)
