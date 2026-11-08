@@ -1,78 +1,91 @@
 <!doctype html><html><head><meta charset="utf-8"><style>
-body{margin:0;background:#fbfbfa;font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1d1f23}
-.wrap{width:1400px;padding:28px 36px;box-sizing:border-box}
-h1{font-size:22px;margin:0 0 4px} .sub{color:#6b7079;margin:0 0 18px}
-svg text{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.legend{display:flex;gap:22px;margin-top:10px;font-size:13px;color:#4a4f57;flex-wrap:wrap}
-.legend span{display:inline-flex;align-items:center;gap:7px}
-.sw{width:14px;height:14px;border-radius:3px;display:inline-block}
-.notes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-top:16px;font-size:13px}
-.notes div{background:#fff;border:1px solid #e6e6e3;border-radius:10px;padding:12px 14px}
-.notes b{display:block;margin-bottom:4px;font-size:13px}
-.notes ul{margin:0;padding-left:18px;color:#3b4048}
+/* Diagram style: docs/DESIGN.md. Fonts from web/fonts (SIL OFL 1.1). */
+@font-face{font-family:Geist;src:url(../../web/fonts/Geist-Regular.woff2);font-weight:400}
+@font-face{font-family:Geist;src:url(../../web/fonts/Geist-Medium.woff2);font-weight:500}
+@font-face{font-family:"Geist Mono";src:url(../../web/fonts/GeistMono-Regular.woff2)}
+body{margin:0;background:#07080B;color:#EEF0F5;font:400 14px/22px Geist,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{width:1400px;padding:40px 36px 40px;box-sizing:border-box}
+h1{margin:0 0 6px;font-size:20px;font-weight:500}
+.sub{margin:0 0 28px;color:#A3A9B8}
+svg{display:block}
+.t{font:500 14px Geist,sans-serif;fill:#EEF0F5}
+.m{font:12px "Geist Mono",monospace;fill:#7A8296}
+.z{font:13px Geist,sans-serif;fill:#A3A9B8}
+.e{font:11px "Geist Mono",monospace;fill:#7A8296}
+.box{fill:#0E1015;stroke:#EEF0F524}
+.quiet{fill:none;stroke:#EEF0F51A;stroke-dasharray:3 4}
+.trusted{fill:#EEF0F505;stroke:#EEF0F51F}
+.untrusted{fill:none;stroke:#EEF0F533;stroke-dasharray:4 4}
+.host{fill:none;stroke:#EEF0F514}
+.ln{stroke:#4A5163;stroke-width:1.25;fill:none;marker-end:url(#a)}
+.hot{stroke:#5FD4C4;marker-end:url(#h)}
+.both{marker-start:url(#a0)}
+.notes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px;margin-top:32px;padding-top:24px;border-top:1px solid #EEF0F514}
+.notes b{display:block;font-weight:500;margin-bottom:8px}
+.notes ul{margin:0;padding:0;list-style:none;color:#A3A9B8;font-size:13px;line-height:20px}
+.notes li{padding:4px 0}
+code{font:12px "Geist Mono",monospace;color:#EEF0F5}
 </style></head><body><div class="wrap">
-<h1>evalskills: system design</h1>
-<p class="sub">One shared VPS. Untrusted skill code runs only inside gVisor sandboxes on a dedicated Docker daemon. Your apps and the main daemon are untouched.</p>
-<svg width="1328" height="610" viewBox="0 0 1328 610">
+<h1>System design</h1>
+<p class="sub">One shared VPS. Untrusted skill code runs only in gVisor sandboxes on a dedicated Docker daemon. Other apps and the main daemon are untouched</p>
+<svg width="1328" height="640" viewBox="0 0 1328 640">
 <defs>
- <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#6b7079"/></marker>
- <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#c2413a"/></marker>
+ <marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0L8,4L0,8" fill="none" stroke="#4A5163" stroke-width="1.25"/></marker>
+ <marker id="a0" viewBox="0 0 8 8" refX="1" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M8,0L0,4L8,8" fill="none" stroke="#4A5163" stroke-width="1.25"/></marker>
+ <marker id="h" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0L8,4L0,8" fill="none" stroke="#5FD4C4" stroke-width="1.25"/></marker>
 </defs>
-<!-- VPS boundary -->
-<rect x="150" y="10" width="1010" height="590" rx="14" fill="none" stroke="#9aa0a8" stroke-dasharray="6 5"/>
-<text x="166" y="32" font-size="13" fill="#6b7079" font-weight="600">SHARED VPS (no /dev/kvm)</text>
 
-<!-- external -->
-<rect x="10" y="70" width="120" height="56" rx="10" fill="#fff" stroke="#c9ccd1"/><text x="70" y="96" text-anchor="middle" font-weight="600">Users</text><text x="70" y="114" text-anchor="middle" font-size="12" fill="#6b7079">browser</text>
-<rect x="1190" y="70" width="128" height="56" rx="10" fill="#fff" stroke="#c9ccd1"/><text x="1254" y="96" text-anchor="middle" font-weight="600">GitHub</text><text x="1254" y="114" text-anchor="middle" font-size="12" fill="#6b7079">public repos</text>
-<rect x="1190" y="430" width="128" height="56" rx="10" fill="#fff" stroke="#c9ccd1"/><text x="1254" y="456" text-anchor="middle" font-weight="600">NVIDIA Build</text><text x="1254" y="474" text-anchor="middle" font-size="12" fill="#6b7079">model API</text>
+<!-- host -->
+<rect x="150" y="8" width="1010" height="624" rx="16" class="host"/>
+<text x="170" y="34" class="z">Shared VPS</text><text x="250" y="34" class="e">no /dev/kvm</text>
 
-<!-- Caddy -->
-<rect x="180" y="62" width="150" height="72" rx="10" fill="#eef1f5" stroke="#b7bec8"/><text x="255" y="92" text-anchor="middle" font-weight="600">Caddy (existing)</text><text x="255" y="111" text-anchor="middle" font-size="12" fill="#6b7079">TLS · rate limit</text>
-<rect x="180" y="150" width="150" height="54" rx="10" fill="#f4f4f2" stroke="#d6d8db"/><text x="255" y="175" text-anchor="middle" fill="#6b7079" font-size="13">Your other apps</text><text x="255" y="192" text-anchor="middle" fill="#9aa0a8" font-size="12">main Docker daemon</text>
+<!-- externals -->
+<rect x="0" y="96" width="120" height="64" rx="8" class="box"/><text x="16" y="123" class="t">Users</text><text x="16" y="143" class="m">browser</text>
+<rect x="1188" y="96" width="140" height="64" rx="8" class="box"/><text x="1204" y="123" class="t">GitHub</text><text x="1204" y="143" class="m">public repos</text>
+<rect x="1188" y="430" width="140" height="64" rx="8" class="box"/><text x="1204" y="457" class="t">NVIDIA Build</text><text x="1204" y="477" class="m">model API</text>
 
-<!-- Zone A: app -->
-<rect x="360" y="44" width="380" height="236" rx="12" fill="#e9f0fd" stroke="#2f6fde" stroke-opacity=".35"/>
-<text x="376" y="66" font-size="12" font-weight="700" fill="#2f6fde">A · PUBLIC APP: parses untrusted input, never runs it, holds no secrets</text>
-<rect x="378" y="80" width="170" height="86" rx="10" fill="#fff" stroke="#2f6fde"/><text x="463" y="106" text-anchor="middle" font-weight="600">Web + API</text><text x="463" y="125" text-anchor="middle" font-size="12" fill="#4a4f57">SPA · leaderboard</text><text x="463" y="142" text-anchor="middle" font-size="12" fill="#4a4f57">discover · submit · limits</text>
-<rect x="560" y="80" width="164" height="86" rx="10" fill="#fff" stroke="#2f6fde"/><text x="642" y="106" text-anchor="middle" font-weight="600">Static worker</text><text x="642" y="125" text-anchor="middle" font-size="12" fill="#4a4f57">SkillEvaluator Tier 1</text><text x="642" y="142" text-anchor="middle" font-size="12" fill="#4a4f57">scan only · $0</text>
-<rect x="378" y="186" width="346" height="78" rx="10" fill="#fff" stroke="#2f6fde" stroke-dasharray="4 3"/><text x="551" y="211" text-anchor="middle" font-weight="600">Data volume</text><text x="551" y="230" text-anchor="middle" font-size="12" fill="#4a4f57">SQLite: skills · jobs (queue) · results</text><text x="551" y="247" text-anchor="middle" font-size="12" fill="#4a4f57">sanitized public reports</text>
+<!-- edge of the host -->
+<rect x="176" y="96" width="150" height="64" rx="8" class="box"/><text x="192" y="123" class="t">Caddy</text><text x="192" y="143" class="m">existing · TLS</text>
+<rect x="176" y="184" width="150" height="64" rx="8" class="quiet"/><text x="192" y="211" class="z">Other apps</text><text x="192" y="231" class="m">main daemon</text>
 
-<!-- Zone B: orchestration -->
-<rect x="360" y="306" width="380" height="186" rx="12" fill="#efebfc" stroke="#6d4fd6" stroke-opacity=".4"/>
-<text x="376" y="488" font-size="12" font-weight="700" fill="#6d4fd6">B · TRUSTED ORCHESTRATION</text>
-<rect x="378" y="322" width="170" height="146" rx="10" fill="#fff" stroke="#6d4fd6"/><text x="463" y="368" text-anchor="middle" font-weight="600">Live worker</text><text x="463" y="388" text-anchor="middle" font-size="12" fill="#4a4f57">SkillEvaluator Tier 3</text><text x="463" y="405" text-anchor="middle" font-size="12" fill="#4a4f57">shared category tasks</text><text x="463" y="422" text-anchor="middle" font-size="12" fill="#4a4f57">1 trial at a time</text><text x="463" y="439" text-anchor="middle" font-size="12" fill="#4a4f57">daily cap · approved skills</text>
-<rect x="560" y="322" width="164" height="146" rx="10" fill="#fff" stroke="#6d4fd6"/><text x="642" y="368" text-anchor="middle" font-weight="600">LLM gateway</text><text x="642" y="388" text-anchor="middle" font-size="12" fill="#4a4f57">holds the real key</text><text x="642" y="405" text-anchor="middle" font-size="12" fill="#4a4f57">per-run tokens</text><text x="642" y="422" text-anchor="middle" font-size="12" fill="#4a4f57">token + $ budget</text><text x="642" y="439" text-anchor="middle" font-size="12" fill="#4a4f57">usage → cost record</text>
+<!-- A: public app -->
+<rect x="356" y="44" width="400" height="220" rx="14" class="trusted"/>
+<text x="376" y="70" class="z">A · Public app</text><text x="376" y="86" class="e">parses untrusted input, runs none of it, no secrets</text>
+<rect x="376" y="104" width="180" height="56" rx="8" class="box"/><text x="392" y="128" class="t">Web and API</text><text x="392" y="146" class="m">discover, submit</text>
+<rect x="576" y="104" width="160" height="56" rx="8" class="box"/><text x="592" y="128" class="t">Static worker</text><text x="592" y="146" class="m">Tier 1 scan · $0</text>
+<rect x="376" y="184" width="360" height="60" rx="8" class="box"/><text x="392" y="208" class="t">Data volume</text><text x="392" y="228" class="m">SQLite: skills, jobs, results · public reports</text>
 
-<!-- Zone C: untrusted -->
-<rect x="790" y="230" width="350" height="350" rx="12" fill="#fbe9e7" stroke="#c2413a" stroke-opacity=".45"/>
-<text x="806" y="252" font-size="12" font-weight="700" fill="#c2413a">C · UNTRUSTED EXECUTION</text>
-<rect x="808" y="266" width="314" height="70" rx="10" fill="#fff" stroke="#c2413a"/><text x="965" y="292" text-anchor="middle" font-weight="600">docker-evals daemon</text><text x="965" y="311" text-anchor="middle" font-size="12" fill="#4a4f57">separate socket · default runtime: gVisor (runsc)</text><text x="965" y="326" text-anchor="middle" font-size="12" fill="#4a4f57">systemd caps: 2 CPU · 3 GB · 1024 tasks</text>
-<rect x="808" y="352" width="314" height="132" rx="10" fill="#fff" stroke="#c2413a"/><text x="965" y="378" text-anchor="middle" font-weight="600">Trial sandboxes (ephemeral)</text><text x="965" y="398" text-anchor="middle" font-size="12" fill="#4a4f57">agent + skill scripts + grader</text><text x="965" y="415" text-anchor="middle" font-size="12" fill="#4a4f57">with-skill arm · baseline arm</text><text x="965" y="432" text-anchor="middle" font-size="12" fill="#4a4f57">gVisor kernel · CPU/mem/time caps</text><text x="965" y="449" text-anchor="middle" font-size="12" fill="#4a4f57">no host mounts · no docker socket</text><text x="965" y="466" text-anchor="middle" font-size="12" fill="#4a4f57">sees only a per-run token</text>
-<rect x="808" y="500" width="314" height="62" rx="10" fill="#fff" stroke="#c2413a" stroke-dasharray="4 3"/><text x="965" y="526" text-anchor="middle" font-weight="600">Egress firewall</text><text x="965" y="545" text-anchor="middle" font-size="12" fill="#4a4f57">allow: LLM gateway only · deny: host, LAN, internet</text>
+<!-- B: trusted orchestration -->
+<rect x="356" y="312" width="400" height="208" rx="14" class="trusted"/>
+<rect x="376" y="332" width="180" height="104" rx="8" class="box"/><text x="392" y="358" class="t">Live worker</text><text x="392" y="378" class="m">SkillEvaluator Tier 3</text><text x="392" y="396" class="m">1 trial at a time</text><text x="392" y="414" class="m">daily cap · approved</text>
+<rect x="576" y="332" width="160" height="104" rx="8" class="box"/><text x="592" y="358" class="t">LLM gateway</text><text x="592" y="378" class="m">holds the real key</text><text x="592" y="396" class="m">per-run tokens</text><text x="592" y="414" class="m">token and $ budget</text>
+<text x="376" y="476" class="z">B · Trusted orchestration</text><text x="376" y="494" class="e">secrets, eval daemon socket only</text>
 
-<!-- arrows -->
-<line x1="130" y1="98" x2="178" y2="98" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="330" y1="98" x2="376" y2="110" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/><text x="336" y="88" font-size="11" fill="#6b7079">HTTPS</text>
-<line x1="548" y1="123" x2="558" y2="123" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/>
-<path d="M724,100 C960,40 1080,90 1188,96" fill="none" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/><text x="930" y="66" font-size="11" fill="#6b7079">shallow clone (read-only scan)</text>
-<line x1="463" y1="166" x2="463" y2="184" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="642" y1="166" x2="642" y2="184" stroke="#6b7079" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="463" y1="266" x2="463" y2="320" stroke="#6d4fd6" stroke-width="1.6" marker-end="url(#a)" marker-start="url(#a)"/><text x="376" y="300" font-size="11" fill="#6d4fd6">jobs ⇄ results</text>
-<path d="M536,320 V293 H806" fill="none" stroke="#6d4fd6" stroke-width="1.6" marker-end="url(#a)"/><text x="600" y="304" font-size="11" fill="#6d4fd6">eval-daemon socket only</text>
-<line x1="965" y1="336" x2="965" y2="350" stroke="#c2413a" stroke-width="1.6" marker-end="url(#r)"/>
-<line x1="965" y1="484" x2="965" y2="498" stroke="#c2413a" stroke-width="1.6" marker-end="url(#r)"/>
-<path d="M808,531 C760,531 760,450 726,440" fill="none" stroke="#c2413a" stroke-width="1.6" marker-end="url(#r)"/><text x="712" y="500" font-size="11" fill="#c2413a">per-run token</text>
-<path d="M700,468 V592 H1254 V488" fill="none" stroke="#6d4fd6" stroke-width="1.6" marker-end="url(#a)"/><text x="712" y="588" font-size="11" fill="#6d4fd6">real key, spend-capped</text>
+<!-- C: untrusted execution -->
+<rect x="786" y="232" width="354" height="340" rx="14" class="untrusted"/>
+<text x="806" y="258" class="z">C · Untrusted execution</text><text x="806" y="274" class="e">gVisor · egress to the gateway only</text>
+<rect x="806" y="292" width="314" height="64" rx="8" class="box"/><text x="822" y="318" class="t">docker-evals daemon</text><text x="822" y="338" class="m">own socket · runsc · 2 CPU, 3 GB</text>
+<rect x="806" y="380" width="314" height="84" rx="8" class="box"/><text x="822" y="406" class="t">Trial sandboxes</text><text x="822" y="426" class="m">agent, skill, grader · with and without</text><text x="822" y="444" class="m">no host mounts · per-run token only</text>
+<rect x="806" y="488" width="314" height="64" rx="8" class="box"/><text x="822" y="514" class="t">Egress firewall</text><text x="822" y="534" class="m">allow gateway · deny host, LAN, internet</text>
+
+<!-- submission path (accent) -->
+<path d="M120 128 H172" class="ln hot"/><text x="128" y="118" class="e">HTTPS</text>
+<path d="M326 128 H372" class="ln hot"/>
+<path d="M556 132 H572" class="ln hot"/>
+<!-- other edges -->
+<path d="M736 128 H1184" class="ln"/><text x="900" y="118" class="e">shallow clone, read-only</text>
+<path d="M466 160 V180" class="ln"/>
+<path d="M656 160 V180" class="ln"/>
+<path d="M466 248 V328" class="ln both"/><text x="456" y="300" class="e" text-anchor="end">jobs, results</text>
+<path d="M530 332 V288 H770 V324 H802" class="ln"/><text x="584" y="282" class="e">eval daemon socket only</text>
+<path d="M963 356 V376" class="ln"/>
+<path d="M963 464 V484" class="ln"/>
+<path d="M806 520 H770 V384 H740" class="ln"/><text x="764" y="470" class="e" text-anchor="end">per-run token</text>
+<path d="M656 436 V604 H1258 V498" class="ln"/><text x="800" y="598" class="e">real key, spend-capped</text>
 </svg>
-<div class="legend">
- <span><i class="sw" style="background:#e9f0fd;border:1px solid #2f6fde"></i>A: public, no secrets, no code execution</span>
- <span><i class="sw" style="background:#efebfc;border:1px solid #6d4fd6"></i>B: trusted code, secrets, Docker access to the eval daemon only</span>
- <span><i class="sw" style="background:#fbe9e7;border:1px solid #c2413a"></i>C: untrusted code, gVisor, egress to gateway only</span>
-</div>
 <div class="notes">
- <div><b>Security</b><ul><li>No container gets the main Docker socket</li><li>A: read-only FS, all caps dropped, non-root</li><li>Model key lives only in the gateway; trials get revocable per-run tokens</li><li>Hard caps: per trial, per day, total spend</li></ul></div>
- <div><b>Flow</b><ul><li>Submit URL → pick skills → job queued</li><li>Static Tier 1 runs for everyone (free, fast)</li><li>Live Tier 3 for approved skills, on shared category tasks, with and without the skill</li><li>Results tied to commit + content hash; unchanged skills are not rerun</li></ul></div>
- <div><b>Scaling (no redesign)</b><ul><li>More live throughput: raise the concurrency cap, or point the worker at E2B/a 2nd VM (one flag: <code>--env-mode</code> / <code>DOCKER_HOST</code>)</li><li>More traffic: more web replicas behind Caddy; SQLite → Postgres</li><li>Three containers + one daemon, all in one compose file + one systemd unit</li></ul></div>
+ <div><b>Security</b><ul><li>No container gets the main Docker socket</li><li>A: read-only filesystem, all capabilities dropped, non-root</li><li>The model key lives only in the gateway. Trials get revocable per-run tokens</li><li>Hard caps per trial, per day and on total spend</li></ul></div>
+ <div><b>Flow</b><ul><li>Submit a URL, pick skills, a job is queued</li><li>Static Tier 1 runs for everyone, free and fast</li><li>Live Tier 3 for approved skills, on shared category tasks, with and without the skill</li><li>Results are tied to commit and content hash. Unchanged skills are not rerun</li></ul></div>
+ <div><b>Scaling, no redesign</b><ul><li>More live throughput: raise the concurrency cap, or point the worker at E2B or a second VM (<code>--env-mode</code>, <code>DOCKER_HOST</code>)</li><li>More traffic: more web replicas behind Caddy, SQLite to Postgres</li><li>Three containers and one daemon, in one compose file and one systemd unit</li></ul></div>
 </div>
 </div></body></html>
