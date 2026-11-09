@@ -8,7 +8,7 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
 
 ## What is in the catalog today
 
-- **123 skills from 16 public repositories, 137 runs** (`catalog/results.jsonl`), all static Tier 1 (SkillEvaluator
+- **166 skills from 35 public repositories, 180 runs** (`catalog/results.jsonl`), all static Tier 1 (SkillEvaluator
   0.8.0). The extra runs are repeat runs for the stability experiment.
 - Each run records the repository, skill path, exact commit, content digest, evaluator version and commit,
   duration and status. Agent, model, test cases and baseline are recorded too, and are empty for static runs, which
@@ -26,7 +26,8 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
 * `pipeline/server.py` is a stdlib HTTP server with a SQLite store (`data/`), a single evaluation worker, the API and
   the SPA.
 * `pipeline/tier3.py` prepares live Tier 3 runs on SkillEvaluator's own cases for each skill (dry-run only until a
-  sandbox and key exist). `shared-tasks/` is empty: it only takes sets vendored from public benchmarks (ADR-0006).
+  sandbox and key exist). `shared-tasks/` only takes sets vendored from public benchmarks (ADR-0006). Today it
+  holds the QuixBugs pilot (`shared-tasks/quixbugs-python/`).
 * `web/` holds the single-page app (no build step).
 * `deploy/` holds the static-only container (`Dockerfile`, `compose.yaml`) and the gVisor eval-daemon drafts
   (`deploy/gvisor/`, unreviewed and untested).
