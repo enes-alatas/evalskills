@@ -6,7 +6,8 @@ requires-python = ">=3.11"
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["cache", "sources", "reports", "data"]
+# Vendored benchmark code stays byte-for-byte as upstream ships it (ADR-0006).
+extend-exclude = ["cache", "sources", "reports", "data", "shared-tasks/*/files", "shared-tasks/*/upstream"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

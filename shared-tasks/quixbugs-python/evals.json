@@ -1,0 +1,77 @@
+{
+  "skill_name": "__SKILL_NAME__",
+  "evals": [
+    {
+      "id": "quixbugs-find_first_in_sorted",
+      "prompt": "The Python program /workspace/input/find_first_in_sorted.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/find_first_in_sorted.py.",
+      "expected_output": "A fixed find_first_in_sorted.py that passes QuixBugs' upstream test cases for find_first_in_sorted; the change is confined to the buggy line.",
+      "files": [
+        "files/find_first_in_sorted.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    },
+    {
+      "id": "quixbugs-lis",
+      "prompt": "The Python program /workspace/input/lis.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/lis.py.",
+      "expected_output": "A fixed lis.py that passes QuixBugs' upstream test cases for lis; the change is confined to the buggy line.",
+      "files": [
+        "files/lis.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    },
+    {
+      "id": "quixbugs-next_permutation",
+      "prompt": "The Python program /workspace/input/next_permutation.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/next_permutation.py.",
+      "expected_output": "A fixed next_permutation.py that passes QuixBugs' upstream test cases for next_permutation; the change is confined to the buggy line.",
+      "files": [
+        "files/next_permutation.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    },
+    {
+      "id": "quixbugs-quicksort",
+      "prompt": "The Python program /workspace/input/quicksort.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/quicksort.py.",
+      "expected_output": "A fixed quicksort.py that passes QuixBugs' upstream test cases for quicksort; the change is confined to the buggy line.",
+      "files": [
+        "files/quicksort.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    },
+    {
+      "id": "quixbugs-sieve",
+      "prompt": "The Python program /workspace/input/sieve.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/sieve.py.",
+      "expected_output": "A fixed sieve.py that passes QuixBugs' upstream test cases for sieve; the change is confined to the buggy line.",
+      "files": [
+        "files/sieve.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    },
+    {
+      "id": "quixbugs-to_base",
+      "prompt": "The Python program /workspace/input/to_base.py has a bug on exactly one line. Find and fix it with a minimal change, keeping the function name and signature. Write the fixed file to /workspace/output/to_base.py.",
+      "expected_output": "A fixed to_base.py that passes QuixBugs' upstream test cases for to_base; the change is confined to the buggy line.",
+      "files": [
+        "files/to_base.py"
+      ],
+      "assertions": [
+        "The fix changes only the buggy line",
+        "The function name and signature are unchanged"
+      ]
+    }
+  ]
+}
