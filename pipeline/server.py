@@ -29,19 +29,23 @@ CATEGORIES = json.loads((ROOT / "catalog" / "categories.json").read_text())
 # Limits (env-overridable)
 MAX_SKILLS_PER_SUBMISSION = int(os.environ.get("MAX_SKILLS_PER_SUBMISSION", "10"))
 MAX_QUEUE = int(os.environ.get("MAX_QUEUE", "100"))
+MAX_BODY = 20_000  # bytes per POST body; fixed, not read from the environment
 SUBMISSIONS_PER_HOUR_PER_CLIENT = int(os.environ.get("SUBMISSIONS_PER_HOUR", "20"))
-MAX_BODY = 20_000
 DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30"))
 
 CACHE_MAX_AGE_HOURS = float(os.environ.get("CACHE_MAX_AGE_HOURS", "6"))
 CACHE_MAX_REPOS = int(os.environ.get("CACHE_MAX_REPOS", "40"))  # x 300 MB per clone bounds the cache volume
 # Who may set X-Forwarded-For. Loopback only by default: the deployment pins Caddy to a fixed address on the web
 # network and sets TRUSTED_PROXIES to it (Enes, 2026-11-08). Unset there, every visitor shares one rate-limit bucket.
-TRUSTED_PROXIES = [
-    ipaddress.ip_network(n.strip())
-    for n in os.environ.get("TRUSTED_PROXIES", "127.0.0.0/8,::1/128").split(",")
-    if n.strip()
-]
+DEFAULT_TRUSTED_PROXIES = "127.0.0.0/8,::1/128"
+
+
+def parse_networks(value: str) -> list:
+    """Comma-separated CIDRs. A malformed entry raises ValueError, so a placeholder left in .env stops the server."""
+    return [ipaddress.ip_network(n.strip()) for n in value.split(",") if n.strip()]
+
+
+TRUSTED_PROXIES = parse_networks(os.environ.get("TRUSTED_PROXIES", DEFAULT_TRUSTED_PROXIES))
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))  # how many proxies append to the header
 GIT_LOCK = ev.GIT_LOCK
 WAKE = threading.Event()
