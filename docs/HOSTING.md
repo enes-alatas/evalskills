@@ -17,6 +17,6 @@ The design is in `docs/ARCHITECTURE.md` and its ADRs. This file lists what the h
   only.
 
 ## Managed sandbox alternative (estimate, not measured)
-E2B or Daytona: 2 vCPU and 4 GiB cost about $0.17/h. 4 shared cases × 2 arms + 1 preflight ≈ 9 sandboxes × 5–10 min
+E2B or Daytona: 2 vCPU and 4 GiB cost about $0.17/h. about 4 cases × 2 arms + 1 preflight ≈ 9 sandboxes × 5–10 min
 ≈ $0.12–0.25 per skill, so a $100 credit covers about 400–800 skill evaluations. Model calls are billed separately.
 Rates came from E2B billing docs via secondary sources (2026-11-07).

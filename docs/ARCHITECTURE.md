@@ -10,8 +10,8 @@ but blocked on a model key and the sandbox install.
    ones → jobs are queued. Rate, size and queue limits apply (see `docs/METHODOLOGY.md`, Safety).
 2. **Static Tier 1** runs for every skill. It is free, takes seconds to two minutes, and executes no skill code
    (`pipeline/evaluate.py`).
-3. **Live Tier 3** (designed, not running) runs only for approved skills, on shared category tasks
-   (`shared-tasks/`), with and without the skill (`pipeline/tier3.py`).
+3. **Live Tier 3** (designed, not running) runs only for approved skills, with and without the skill, on
+   SkillEvaluator's own cases for that skill (`pipeline/tier3.py`, ADR-0006).
 4. **Results** are stored with the commit, folder digest and evaluator version. Unchanged skills are not rerun.
    The leaderboard ranks by ADR-0001.
 

@@ -85,7 +85,7 @@ code{font:12px "Geist Mono",monospace;color:#EEF0F5}
 </svg>
 <div class="notes">
  <div><b>Security</b><ul><li>No container gets the main Docker socket</li><li>A: read-only filesystem, all capabilities dropped, non-root</li><li>The model key lives only in the gateway. Trials get revocable per-run tokens</li><li>Hard caps per trial, per day and on total spend</li></ul></div>
- <div><b>Flow</b><ul><li>Submit a URL, pick skills, a job is queued</li><li>Static Tier 1 runs for everyone, free and fast</li><li>Live Tier 3 for approved skills, on shared category tasks, with and without the skill</li><li>Results are tied to commit and content hash. Unchanged skills are not rerun</li></ul></div>
+ <div><b>Flow</b><ul><li>Submit a URL, pick skills, a job is queued</li><li>Static Tier 1 runs for everyone, free and fast</li><li>Live Tier 3 for approved skills, on SkillEvaluator's own cases, with and without the skill</li><li>Results are tied to commit and content hash. Unchanged skills are not rerun</li></ul></div>
  <div><b>Scaling, no redesign</b><ul><li>More live throughput: raise the concurrency cap, or point the worker at E2B or a second VM (<code>--env-mode</code>, <code>DOCKER_HOST</code>)</li><li>More traffic: more web replicas behind Caddy, SQLite to Postgres</li><li>Three containers and one daemon, in one compose file and one systemd unit</li></ul></div>
 </div>
 </div></body></html>

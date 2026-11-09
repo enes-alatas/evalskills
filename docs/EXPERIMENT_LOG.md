@@ -101,3 +101,10 @@
 - Four skill-creator variants (anthropics 77.2, openai 81.5, ComposioHQ 81.5, microsoft 80.5) span 4.3 points.
   They share an ancestry and differ mostly in packaging, so the structural score again separates format, not
   capability; only shared live tasks could rank them on what they do.
+
+## Change of direction — no self-authored benchmarks (2026-11-09, ADR-0006)
+- Enes decided that live runs use SkillEvaluator's own content, and that shared task sets come only from public
+  benchmarks we vendor and adapt. The self-authored documents-pdf and testing-debugging sets (E5, E6) are removed,
+  and the proposed code-review set (#58) was closed without merging. None of them had run live.
+- Live results will therefore be per-skill Skill Lift on each skill's own cases, not comparable across skills,
+  until a public benchmark is vendored for a category.
