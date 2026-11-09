@@ -9,5 +9,8 @@
  {"id": "github", "label": "GitHub workflow"},
  {"id": "skill-authoring", "label": "Skill authoring"},
  {"id": "mcp", "label": "MCP & integrations"},
+ {"id": "marketing", "label": "Marketing & SEO"},
+ {"id": "writing", "label": "Writing"},
+ {"id": "planning", "label": "Planning"},
  {"id": "other", "label": "Other"}
 ]
