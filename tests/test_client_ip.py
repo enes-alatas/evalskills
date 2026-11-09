@@ -44,12 +44,13 @@ def test_hops_zero_ignores_the_header(monkeypatch):
 
 
 def test_by_default_only_loopback_is_trusted(monkeypatch):
-    monkeypatch.delenv("TRUSTED_PROXIES", raising=False)
-    import importlib
+    monkeypatch.setattr(server, "TRUSTED_PROXIES", server.parse_networks(server.DEFAULT_TRUSTED_PROXIES))
+    assert server.client_ip("127.0.0.1", "198.51.100.7") == "198.51.100.7"
+    assert server.client_ip(CADDY, "198.51.100.7") == CADDY  # a private-range peer is not trusted unless named
 
-    fresh = importlib.reload(server)
-    try:
-        assert fresh.client_ip("127.0.0.1", "198.51.100.7") == "198.51.100.7"
-        assert fresh.client_ip(CADDY, "198.51.100.7") == CADDY  # a private-range peer is not trusted unless named
-    finally:
-        importlib.reload(server)
+
+def test_the_env_example_placeholder_refuses_to_parse():
+    example = (Path(__file__).resolve().parents[1] / "deploy" / "env.example").read_text()
+    (value,) = [line.split("=", 1)[1] for line in example.splitlines() if line.startswith("TRUSTED_PROXIES=")]
+    with pytest.raises(ValueError):
+        server.parse_networks(value)
