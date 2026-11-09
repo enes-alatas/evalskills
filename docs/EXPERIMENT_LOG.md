@@ -92,3 +92,11 @@
 - Reading: the score moves only when content moves, and frontmatter-level drift between copies of the same skill
   moves it by 0–2.3 points (4 pairs incl. E6). The ±3 noise band stays. Its source is the score's sensitivity to
   small edits of the same skill; re-running identical content adds none.
+
+## E8 — shared code-review task set (prepared, not run)
+- `shared-tasks/code-review`: a change with 3 planted defects (SQL string formatting, an off-by-one that skips the
+  first item, a broad `except` returning `{}`) plus one harmless edit; a behaviour-preserving refactor; a negative
+  case. The grader scores by line location, not wording: recall over the planted spans minus 0.1 per stray high
+  finding, and 0/1 for any high finding on the clean refactor.
+- Self-test: a precise review scores 1.0, an empty or missing one 0, flagging every line as high 0 (below a 2-of-3
+  review at 0.67). SkillEvaluator's own Tier 3 dataset checks accept the prepared set. No live run yet.

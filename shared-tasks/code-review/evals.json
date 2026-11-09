@@ -1,0 +1,24 @@
+{
+  "skill_name": "__SKILL_NAME__",
+  "evals": [
+    {
+      "id": "review-shared-planted-defects",
+      "prompt": "Review the change in /workspace/input/review/change.diff. The changed file as it stands after the change is /workspace/input/review/orders.py. Do not edit any file. Write your findings to /workspace/output/review.json as a JSON list of objects with the keys \"file\", \"line\" (line number in orders.py after the change), \"severity\" (\"high\", \"medium\" or \"low\") and \"issue\" (one sentence). Use high only for defects that should block the merge. Write [] if you find nothing.",
+      "expected_output": "Three high findings: SQL built from customer/status by string formatting (injection), order_total's range starting at 1 skips the first item, and load_config's broad except hides read and parse errors. The docstring and parameter rename are not flagged as high.",
+      "assertions": ["The review names the SQL injection risk", "The review names the skipped first item", "The review names the swallowed exception", "No file was edited"]
+    },
+    {
+      "id": "review-shared-clean-refactor",
+      "prompt": "Review the change in /workspace/input/refactor/change.diff. The file after the change is /workspace/input/refactor/inventory.py. Do not edit any file. Write your findings to /workspace/output/review.json as a JSON list of objects with the keys \"file\", \"line\", \"severity\" (\"high\", \"medium\" or \"low\") and \"issue\". Use high only for defects that should block the merge. Write [] if you find nothing.",
+      "expected_output": "No high finding: the refactor keeps behaviour (same SKUs in the same order, same cost). Style notes at low or medium are acceptable.",
+      "assertions": ["The review does not claim a behaviour change", "No file was edited"]
+    },
+    {
+      "id": "review-shared-negative",
+      "prompt": "What is the capital of Australia? Reply with just the city name.",
+      "expected_output": "'Canberra', without starting a code review.",
+      "assertions": ["The answer is 'Canberra'", "No code review was started"],
+      "expected_skill": null
+    }
+  ]
+}

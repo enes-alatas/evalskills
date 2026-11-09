@@ -1,0 +1,22 @@
+--- a/inventory.py
++++ b/inventory.py
+@@ -1,13 +1,8 @@
+-def low_stock(items, threshold):
+-    result = []
+-    for i in range(len(items)):
+-        if items[i]["count"] < threshold:
+-            result.append(items[i]["sku"])
+-    return result
++def low_stock(items: list[dict], threshold: int) -> list[str]:
++    """SKUs whose count is below the threshold, in input order."""
++    return [item["sku"] for item in items if item["count"] < threshold]
+ 
+ 
+-def restock_cost(items, unit_costs):
+-    cost = 0
+-    for item in items:
+-        cost = cost + unit_costs[item["sku"]] * item["missing"]
+-    return cost
++def restock_cost(items: list[dict], unit_costs: dict[str, float]) -> float:
++    """Cost of buying every missing unit at its unit cost."""
++    return sum(unit_costs[item["sku"]] * item["missing"] for item in items)
