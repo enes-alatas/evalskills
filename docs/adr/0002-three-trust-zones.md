@@ -25,3 +25,18 @@ apps behind Caddy, and it has no `/dev/kvm`.
 - A bug in zone A exposes no secret and can't start code execution. A compromised trial reaches only the gateway,
   with a token capped in time and budget.
 - Three containers and one extra daemon, in one compose file plus one systemd unit.
+
+**Amendment (2026-11-09, #32):** static Tier 1 runs as a `skillevaluator tier1` subprocess inside the zone A app
+container (`pipeline/evaluate.py`), not in the pinned image this ADR names. Enes accepted this on 2026-11-09 as an
+interim exception.
+- **Why it is acceptable for now:** Tier 1 parses and scans the skill and executes none of its code (`--no-llm`, no
+  model key). The container is non-root, has a read-only root filesystem and drops all capabilities. Zone A holds
+  no secrets, so a compromised scanner has no credential to take.
+- **What it gives up against the pinned `--network none` image:** a scanner or parser bug triggered by a crafted
+  skill would run with the app's network access and its uid. It could reach the network and read or rewrite all
+  four writable volumes: `data` (SQLite), `reports`, `cache` (clones) and `uvcache` (`~/.cache/uv`). `uvcache` is
+  the worst case, because SkillSpector runs from it via `uv tool run`: code planted there would persist and run on
+  every later scan, beyond the one that planted it. The evaluator is pinned by the commit and lockfile the app image
+  is built from, not by a separate image digest recorded with each run.
+- **Planned end state:** #65. Zone B runs the digest-pinned image on the `docker-evals` daemon with
+  `--network none`, and zone A reads back only the report. That move closes this exception.
