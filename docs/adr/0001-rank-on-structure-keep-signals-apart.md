@@ -33,3 +33,7 @@ How each score is computed and read is in `docs/METHODOLOGY.md`, which changes i
   saying so.
 - Comparable live numbers need shared tasks with deterministic graders (`shared-tasks/`), which costs authoring time
   per category.
+
+**Amendment (2026-11-09, #61):** shared category tasks now come only from vendored public benchmarks, never from
+sets we author (ADR-0006). The self-authored `shared-tasks/` sets are removed. Until a public set exists for a
+category, live results are per-skill Skill Lift on each skill's own cases and are not compared across skills.
