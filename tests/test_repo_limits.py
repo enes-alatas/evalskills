@@ -11,17 +11,25 @@ import discover as disc  # noqa: E402
 import evaluate as ev  # noqa: E402
 
 
-@pytest.mark.parametrize("code", [403, 429])
-def test_a_rate_limited_size_lookup_refuses_instead_of_cloning(monkeypatch, code):
+@pytest.mark.parametrize(
+    "code, headers, message",
+    [
+        (429, {}, "try again later"),
+        (403, {"X-RateLimit-Remaining": "0"}, "try again later"),
+        (403, {"X-RateLimit-Remaining": "42", "Retry-After": "60"}, "try again later"),  # secondary rate limit
+        (403, {}, "refused to describe"),  # blocked repo or other 403: still no clone, but not called rate limiting
+    ],
+)
+def test_a_size_lookup_without_an_answer_refuses_instead_of_cloning(monkeypatch, code, headers, message):
     def urlopen(req, timeout):
-        raise urllib.error.HTTPError(req.full_url, code, "rate limited", {}, io.BytesIO())
+        raise urllib.error.HTTPError(req.full_url, code, "refused", headers, io.BytesIO())
 
     def checkout(_repo):
         raise AssertionError("must not clone when the size is unknown")
 
     monkeypatch.setattr(disc.urllib.request, "urlopen", urlopen)
     monkeypatch.setattr(disc, "checkout", checkout)
-    with pytest.raises(disc.DiscoveryError, match="try again later"):
+    with pytest.raises(disc.DiscoveryError, match=message):
         disc.discover("https://github.com/example/repo")
 
 

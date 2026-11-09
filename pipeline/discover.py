@@ -41,8 +41,12 @@ def repo_meta(repo: str) -> dict:
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise DiscoveryError("Repository not found or not public") from e
-        if e.code in (403, 429):  # rate limited: without the size we must not clone (fail closed)
-            raise DiscoveryError("GitHub is rate-limiting this server; please try again later") from e
+        if e.code in (403, 429):  # without the size we must not clone (fail closed)
+            h = e.headers or {}
+            # Primary limit: Remaining is 0. Secondary limit: a 403 with Retry-After while Remaining is non-zero.
+            if e.code == 429 or h.get("X-RateLimit-Remaining") == "0" or h.get("Retry-After"):
+                raise DiscoveryError("GitHub is rate-limiting this server; please try again later") from e
+            raise DiscoveryError("GitHub refused to describe this repository, so it can't be checked") from e
         raise
 
 
