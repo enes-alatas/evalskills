@@ -77,3 +77,18 @@
 - render-deploy (pilot, before the retry existed) had a SkillSpector crash recorded. It was re-run with retry.
 - Added `shared-tasks/testing-debugging`: a fixture module with 2 planted bugs, hidden tests, a regression-test
   task and a negative case. Self-test: buggy code scores 0.33 and 0, fixed code scores 1.0 and 1.0.
+
+## E7 — batch 4 (24 skills, 10 new repos) and the duplicate-copy check
+- 24/24 completed, 70 s compute, $0. Catalog: 148 skills from 26 repos; structural score min 71.5, median 86.2,
+  max 98.8 (unchanged). Adds within-category depth: code-review now 9 skills, testing-debugging 11, frontend 16.
+- Also committed: one earlier anthropics/skills `academy-guide` run from an end-to-end submit through the UI.
+- Duplicate copies of one skill inside a repo, to test the noise band:
+  - career-ops `.claude/` vs `.opencode/`: same tree digest, 85.5 and 85.5. Tier 1 is deterministic on identical
+    content; there is no run-to-run noise to speak of.
+  - career-ops `.agents/` (SKILL.md reworded, ~260 diff lines): 86.2, Δ0.7.
+  - i-have-adhd `skills/` vs `.cursor/` (extra `agents/` dir only): 90.2 and 90.2, Δ0.
+  - ponytail `skills/` vs `.openclaw/` (shorter description, `argument-hint` swapped for `homepage`): 86.8 vs 88.0,
+    Δ1.2.
+- Reading: the score moves only when content moves, and frontmatter-level drift between copies of the same skill
+  moves it by 0–2.3 points (4 pairs incl. E6). The ±3 noise band stays. Its source is the score's sensitivity to
+  small edits of the same skill; re-running identical content adds none.
