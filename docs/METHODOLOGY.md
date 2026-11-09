@@ -44,9 +44,17 @@ Tier 3 runs an agent on test cases with the skill and without it (the baseline) 
 deployment can't run it yet because it has no model-provider credential and no isolated sandbox. The leaderboard
 shows "not run" for every skill. It never shows an estimate.
 
-Tier 3 results won't be comparable across skills that were evaluated on different tasks. When live results are
-added, they will show which test cases were used, and comparisons will be limited to skills that ran on the same
-shared category tests.
+Live runs use SkillEvaluator's own content for each skill (ADR-0006): the test cases the skill publishes in its
+`evals/`, or the starter case SkillEvaluator prepares when it has none. Every skill is therefore tested on
+different cases, so a live result says how much this skill helped on its own cases, and is not comparable across
+skills, even within a category. When live results are added, they will show which cases were used.
+
+A skill doesn't grade itself. Before a run, any grader, grading config, native Harbor task or custom trial
+environment it ships is removed, and SkillEvaluator's default judge scores its cases. Because the author still wrote
+the cases, such a result is labelled **self-reported**.
+
+We don't write our own benchmark tasks. Cross-skill comparison would need a shared task set vendored from a
+public benchmark, with its source and licence recorded. None exists yet.
 
 ## Statuses
 

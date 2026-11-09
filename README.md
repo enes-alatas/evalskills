@@ -25,8 +25,8 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
   reports go to `reports/` (gitignored).
 * `pipeline/server.py` is a stdlib HTTP server with a SQLite store (`data/`), a single evaluation worker, the API and
   the SPA.
-* `pipeline/tier3.py` prepares live Tier 3 runs on the shared category tasks (dry-run only until a sandbox and key
-  exist). `shared-tasks/` holds those tasks and their deterministic graders.
+* `pipeline/tier3.py` prepares live Tier 3 runs on SkillEvaluator's own cases for each skill (dry-run only until a
+  sandbox and key exist). `shared-tasks/` is empty: it only takes sets vendored from public benchmarks (ADR-0006).
 * `web/` holds the single-page app (no build step).
 * `deploy/` holds the static-only container (`Dockerfile`, `compose.yaml`) and the gVisor eval-daemon drafts
   (`deploy/gvisor/`, unreviewed and untested).
