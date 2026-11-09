@@ -54,7 +54,9 @@ environment it ships is removed, and SkillEvaluator's default judge scores its c
 the cases, such a result is labelled **self-reported**.
 
 We don't write our own benchmark tasks. Cross-skill comparison would need a shared task set vendored from a
-public benchmark, with its source and licence recorded. None exists yet.
+public benchmark, with its source and licence recorded. The first is a pilot for testing-debugging: six
+programs from QuixBugs (MIT CSAIL, 2017), graded with QuixBugs' own test cases (`shared-tasks/quixbugs-python/`).
+It hasn't run live yet.
 
 ## Statuses
 
