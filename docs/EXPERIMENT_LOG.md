@@ -92,3 +92,12 @@
 - Reading: the score moves only when content moves, and frontmatter-level drift between copies of the same skill
   moves it by 0–2.3 points (4 pairs incl. E6). The ±3 noise band stays. Its source is the score's sensitivity to
   small edits of the same skill; re-running identical content adds none.
+
+## E9 — batch 5 (18 skills, 9 new repos: deployment and infra vendors, skill authoring)
+- 18/18 completed, 38 s compute, $0, no scanner crashes. Catalog: 166 skills from 35 repos; structural score min
+  71.5, median 86.2, max 98.8 (unchanged). Deployment grows from 7 to 19 skills, skill-authoring from 7 to 9.
+- Vendor skills for the same job: Firebase hosting 84.2 vs app hosting 87.8; Terraform style guide 89.8 vs Pulumi
+  best practices 85.0; Azure deploy 87.0 vs Azure App Service (Python) deploy 80.0; Cloudflare wrangler 86.8.
+- Four skill-creator variants (anthropics 77.2, openai 81.5, ComposioHQ 81.5, microsoft 80.5) span 4.3 points.
+  They share an ancestry and differ mostly in packaging, so the structural score again separates format, not
+  capability; only shared live tasks could rank them on what they do.
