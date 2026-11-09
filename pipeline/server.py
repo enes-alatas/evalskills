@@ -80,17 +80,35 @@ def skill_id(repo, path):
     return f"{repo}:{path}"
 
 
-def import_results():
-    """Load catalog/results.jsonl (batch runs) into the DB."""
+CURATED_CATEGORIES = "skill-categories.tsv"
+
+
+def catalog_categories(catalog_dir=None):
+    """skill id -> category for catalog skills: the batch TSVs as they ran, then the curated file, which wins."""
+    catalog_dir = catalog_dir or ROOT / "catalog"
+    files = sorted(f for f in catalog_dir.glob("*.tsv") if f.name != CURATED_CATEGORIES)
+    files.append(catalog_dir / CURATED_CATEGORIES)
     meta = {}
-    for f in (ROOT / "catalog").glob("*.tsv"):
+    for f in files:
+        if not f.exists():
+            continue
         for line in f.read_text().splitlines():
             parts = line.split("\t")
-            if len(parts) >= 3:
+            if len(parts) >= 3 and parts[2]:
                 meta[skill_id(parts[0], parts[1])] = parts[2]
+    return meta
+
+
+def import_results():
+    """Load catalog/results.jsonl (batch runs) into the DB. A catalog skill's category follows the curated one, even
+    in a DB that already holds the skill; a submitted skill keeps the category its submitter chose."""
+    meta = catalog_categories()
     with db() as c:
         for rec in ev.load_results():
-            add_record(c, rec, meta.get(skill_id(rec["source"]["repo"], rec["source"]["skill_path"])))
+            sid = skill_id(rec["source"]["repo"], rec["source"]["skill_path"])
+            add_record(c, rec, meta.get(sid))
+            if sid in meta:
+                c.execute("UPDATE skills SET category=? WHERE id=? AND origin='catalog'", (meta[sid], sid))
 
 
 def read_desc(rec):
