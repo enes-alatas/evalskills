@@ -89,8 +89,11 @@ select { background: var(--card); }
 .pick-tools[hidden], .picks li[hidden] { display: none; }
 .picks li.done label { cursor: default; color: var(--fg2); }
 .picks input:disabled + label { cursor: default; }
-.pick-cat { display: flex; align-items: center; gap: 12px; margin: 16px 0; font-size: 13px; color: var(--muted); }
-#found > .primary { display: block; height: 40px; }
+.pick-act { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.pick-cat { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); }
+.pick-act .primary { height: 40px; margin-left: auto; }
+/* Once skills are listed, Cancel sits under Evaluate on the right. */
+#found:not([hidden]) + #add-cancel { width: fit-content; margin: 8px -8px 0 auto; }
 #add-cancel { display: block; margin: 12px 0 0 -8px; }
 .err { color: var(--red); font-size: 13px; margin: 8px 0 0; text-align: center; }
 
