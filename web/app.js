@@ -412,7 +412,9 @@ async function init() {
     if (o) { hideToast(); state.done = o.dataset.open; openResult(o.dataset.open); }
     else if (e.target.closest("[data-dismiss]")) hideToast();
   });
-  if (state.meta.source_repo_url) { $("#gh").href = state.meta.source_repo_url; $("#gh").hidden = false; }
+  if (state.meta.source_repo_url) {
+    for (const id of ["#gh", "#foot-gh"]) { $(id).href = state.meta.source_repo_url; $(id).hidden = false; }
+  }
   $("#add-btn").addEventListener("click", () => showAdd(true));
   $("#add-cancel").addEventListener("click", () => showAdd(false));
   $("#add").addEventListener("submit", lookup);

@@ -84,14 +84,20 @@ See `ref-layout.png`.
 
 - One centered column, about 720 px wide, with the same structure on mobile and desktop.
 - From top to bottom: a top bar with the wordmark (Geist 20/28, 500, `--fg`) on the left and the GitHub mark on
-  the right, the title "Evaluate agent skills", the subtitle "Results from NVIDIA SkillEvaluator, pinned to the
-  commit tested", the **Check a skill** button, the category tabs, search on its own full-width row, then the
-  leaderboard.
-- Only the leaderboard scrolls (#81). Everything above search stays in view; the score note and the security key
-  sit at the top of the scrolling list and scroll away with it. If the header outgrows a short screen (the add form
-  open), the whole column scrolls instead.
+  the right; a header row; the category tabs; search on its own full-width row; the score note and security key;
+  the leaderboard; a footer.
+- The header row is a compact split (#89): the title "Evaluate agent skills" (26/32, 500) over the subtitle "Results
+  from NVIDIA SkillEvaluator, pinned to the commit tested", left-aligned, with **Check a skill** (40 px, primary) on
+  the right, centred against them. On mobile they stack in reading order, left-aligned. A centred stack with a big
+  button was the template default (unslop) and took more than half of the first screen.
+- The page scrolls to its end. The leaderboard sits in its own container, at most the viewport height minus 96 px
+  (64 px on mobile), its last row closed by a hairline. Its scroll hands over to the page at either end, so the footer is
+  always reachable (#89). On desktop the board starts in the upper half of the first screen.
+- Footer: one quiet 13 px row under the board, "evalskills · Static results from NVIDIA SkillEvaluator" on the left,
+  "How scores work" and "Source" (only with `SOURCE_REPO_URL`) on the right; stacked on mobile.
+- Scrollbars are thin and quiet everywhere: `--line2` thumb on a transparent track, 8 px in WebKit.
 - The GitHub mark links to the project's source. It appears only when the server sets `SOURCE_REPO_URL`.
-- **Check a skill** turns into the repo input in place, with no modal. "Find skills" lists the skills found at the
+- **Check a skill** opens the repo input in place below the header row, full column width, with no modal. "Find skills" lists the skills found at the
   resolved commit as a checklist, and "Evaluate N skills" queues them.
 - Repositories with many skills (#83): a filter box and "Select all" sit above the checklist. Skills that need a run
   come first. Listed skills whose content is unchanged come last, ticked and disabled as "Up to date". The limit of 10
