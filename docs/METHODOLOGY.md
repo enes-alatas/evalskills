@@ -19,9 +19,9 @@ never combines them into a single number.
 * Repeatability: it is deterministic. The same content and the same evaluator version give the same score (see the
   experiment log).
 * Noise band: about ±2–3 points. Two copies of the same skill with small format drift scored 74.5 and 76.8 (E6, one
-  pair). Scores within 3 points of each other should be read as ties. The leaderboard and the result view both say
-  so. Real content changes can move the score by much more (E4: 74.0 vs 84.8 for two different pdf skills), and
-  that is a real difference, not noise.
+  pair). Scores within 3 points of each other should be read as ties. The result view says so. The leaderboard
+  does not, because a bare tie line confused readers without this context. Real content changes can move the score
+  by much more (E4: 74.0 vs 84.8 for two different pdf skills), and that is a real difference, not noise.
 * The leaderboard is ordered by this score, highest first. Ties are ordered alphabetically. A skill with no completed
   evaluation gets no rank and no score.
 

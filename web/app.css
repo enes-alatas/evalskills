@@ -114,6 +114,7 @@ select { background: var(--card); }
 .note a { color: var(--fg2); }
 .note p { margin: 0; }
 .note p + p { margin-top: 4px; }
+.note #why { margin-top: 4px; }
 button.why { font: inherit; height: auto; padding: 0; border-radius: 0; background: none; color: var(--fg2); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
 button.why:hover { text-decoration-color: var(--fg2); }
 

@@ -58,9 +58,12 @@
       <input id="q" type="search" placeholder="Search skills" aria-label="Search skills">
     </div>
     <div class="note" id="notice">
-      <p>Scores are structural quality from static checks. Scores within about 3 points are a tie. <button type="button" class="why" id="why-btn" aria-expanded="false" aria-controls="why">Why?</button> Live runs are not available yet. <a href="/docs/METHODOLOGY.md">How scores work</a></p>
-      <p id="why" hidden>Two copies of the same skill scored 74.5 and 76.8 in our tests, so a gap of 3 points or less does not mean one skill is better. <a href="/docs/METHODOLOGY.md">Evidence in the methodology</a></p>
-      <p>Security pills count static scanner findings: <span class="sv-critical">critical</span>, <span class="sv-high">high</span>, <span class="sv-medium">medium</span>. Pattern matches, not confirmed vulnerabilities. No pill means nothing at medium or above, but most scans are partial, so it is not marked clean.</p>
+      <p>Static checks only, not live runs. <button type="button" class="why" id="why-btn" aria-expanded="false" aria-controls="why">How it works</button></p>
+      <div id="why" hidden>
+        <p>Scores rate SKILL.md and the folder layout against SkillEvaluator's quality rubric. They say nothing yet about how an agent performs with the skill.</p>
+        <p>Security pills count static scanner findings: <span class="sv-critical">critical</span>, <span class="sv-high">high</span>, <span class="sv-medium">medium</span>. They are pattern matches, not confirmed vulnerabilities. No pill means nothing at medium or above, but most scans are partial, so it is not marked clean.</p>
+        <p><a href="/docs/METHODOLOGY.md">Methodology and experiments</a></p>
+      </div>
     </div>
     <div class="scroll" id="scroll">
       <ol id="board" class="board"></ol>
