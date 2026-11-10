@@ -21,7 +21,7 @@
     <h1>Evaluate agent skills</h1>
     <p class="lede">Results from NVIDIA SkillEvaluator, pinned to the commit tested</p>
 
-    <button id="add-btn" class="primary big" aria-expanded="false" aria-controls="add"><span aria-hidden="true">+</span> Add a skill</button>
+    <button id="add-btn" class="primary big" aria-expanded="false" aria-controls="add"><span aria-hidden="true">+</span> Check a skill</button>
 
     <form id="add" class="add" hidden>
       <label for="url" class="sr">Public GitHub repository URL</label>
@@ -49,12 +49,15 @@
       <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m11 11 3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       <input id="q" type="search" placeholder="Search skills, repositories, categories" aria-label="Search skills">
     </div>
-    <div class="note" id="notice">
-      <p>Scores are structural quality from static checks. Scores within about 3 points are a tie. <button type="button" class="why" id="why-btn" aria-expanded="false" aria-controls="why">Why?</button> Live runs are not available yet. <a href="/docs/METHODOLOGY.md">How scores work</a></p>
-      <p id="why" hidden>Two copies of the same skill scored 74.5 and 76.8 in our tests, so a gap of 3 points or less does not mean one skill is better. <a href="/docs/METHODOLOGY.md">Evidence in the methodology</a></p>
+    <div class="scroll" id="scroll">
+      <div class="note" id="notice">
+        <p>Scores are structural quality from static checks. Scores within about 3 points are a tie. <button type="button" class="why" id="why-btn" aria-expanded="false" aria-controls="why">Why?</button> Live runs are not available yet. <a href="/docs/METHODOLOGY.md">How scores work</a></p>
+        <p id="why" hidden>Two copies of the same skill scored 74.5 and 76.8 in our tests, so a gap of 3 points or less does not mean one skill is better. <a href="/docs/METHODOLOGY.md">Evidence in the methodology</a></p>
+        <p>Security counts static scanner findings by severity: <span class="sv-critical">critical</span>, <span class="sv-high">high</span>, <span class="sv-medium">medium</span>. They are pattern matches, not confirmed vulnerabilities. A row without pills had nothing at medium or above, but most scans are partial, so it is not marked clean. Open a skill for details.</p>
+      </div>
+      <ol id="board" class="board"></ol>
+      <p id="empty" class="hint center" hidden>No skills match</p>
     </div>
-    <ol id="board" class="board"></ol>
-    <p id="empty" class="hint center" hidden>No skills match</p>
   </section>
 </main>
 <dialog id="result" class="sheet" aria-labelledby="r-title">

@@ -4,7 +4,8 @@ This file is the doc of record for how evalskills looks: the web app, the repo d
 approved it step by step on 2026-11-08. Reference mockups are in `docs/design/ref-*.png`. They use sample data, not
 results.
 Enes's feedback after the first deploy (2026-11-10, #77) changed the header, the search row, the result view (now a
-dialog), motion and security pills; the reference mockups predate it.
+dialog), motion and security pills. His next round (#81) gave each severity its own colour, cut rows to `owner/repo`
+and made only the leaderboard scroll. The reference mockups predate both.
 
 The rules adapt [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky (CC BY 4.0).
 
@@ -16,8 +17,8 @@ is the product, so everything else stays out of its way.
 - Quiet chrome: one neutral ramp and one accent, and the accent is used rarely.
 - No gradients, glows, dot grids, blobs, emoji or uppercase tracked labels. Pills are used for one thing only:
   security findings (see Security pills).
-- Signature detail: every result shows `owner/repo @ <short sha>`, the exact commit evaluated. It appears on rows
-  and in the result view, and nowhere else.
+- Signature detail: every result shows `owner/repo/path @ <short sha>`, the exact commit evaluated, in the result
+  view. Rows show `owner/repo` only (#81).
 
 ## Colour
 
@@ -42,6 +43,9 @@ Contrast on `--bg` and on `--card`:
 | accent | 11.2 | 10.6 |
 | inconclusive | 9.0 | 8.6 |
 | failed | 5.1 | 4.9 |
+| critical `#FF8589` | 8.6 | 8.1 |
+| high `#FFA877` | 10.6 | 10.1 |
+| medium `#D6C05A` | 11.0 | 10.5 |
 
 - The primary button is `--fg` with `--bg` text, not the accent.
 - Depth comes from surface steps and hairlines. There are no shadows.
@@ -67,8 +71,7 @@ There are two families and two weights (400 and 500). Both fonts are OFL, so shi
 ## Space, radius and motion
 
 - Spacing sits on a 4px grid: 4, 8, 12, 16, 24, 32, 48, 64.
-- Leaderboard rows are 64–72 tall on desktop. On mobile, a long path and the security pills may wrap to a third
-  line.
+- Leaderboard rows are 64–72 tall on desktop. On mobile, the security pills may wrap to a third line.
 - Radius: 8 for buttons, inputs and tabs, 12 for the open result and panels, 14 for diagram zones. An inner radius is
   the outer radius minus the padding.
 - Motion: colour and opacity transitions, 150 ms, `cubic-bezier(0.22, 1, 0.36, 1)`. The result dialog and the
@@ -82,10 +85,13 @@ See `ref-layout.png`.
 - One centered column, about 720 px wide, with the same structure on mobile and desktop.
 - From top to bottom: a top bar with the wordmark (Geist 20/28, 500, `--fg`) on the left and the GitHub mark on
   the right, the title "Evaluate agent skills", the subtitle "Results from NVIDIA SkillEvaluator, pinned to the
-  commit tested", the **Add a skill** button, the category tabs, search on its own full-width row, then the
+  commit tested", the **Check a skill** button, the category tabs, search on its own full-width row, then the
   leaderboard.
+- Only the leaderboard scrolls (#81). Everything above search stays in view; the score note and the security key
+  sit at the top of the scrolling list and scroll away with it. If the header outgrows a short screen (the add form
+  open), the whole column scrolls instead.
 - The GitHub mark links to the project's source. It appears only when the server sets `SOURCE_REPO_URL`.
-- **Add a skill** turns into the repo input in place, with no modal. "Find skills" lists the skills found at the
+- **Check a skill** turns into the repo input in place, with no modal. "Find skills" lists the skills found at the
   resolved commit as a checklist, and "Evaluate N skills" queues them.
 
 ## Statuses
@@ -125,19 +131,26 @@ mobile it is a bottom sheet and its two columns stack. Esc, the close button or 
 ## Security pills
 
 Each completed row, and the dialog header, shows security findings as small mono pills (11 px, radius 9). They
-count distinct finding types at medium or above, the same figure as the result view's Security line.
+count distinct finding types at medium or above, the same figure as the result view's Security line. On rows, a
+muted "Security:" label comes first, and a one-line key above the list names the three colours (#81).
+
+Each severity has its own colour, used the same way on pills, in the Security line (each part in its own colour) and
+in the findings list:
 
 | Pill | Colour |
 | --- | --- |
-| `N critical`, `N high` | red text `#FF8589` on red at 12%, red border at 25% |
-| `N medium` | amber text on amber at 10%, amber border at 24% |
+| `N critical` | red text `#FF8589` on red at 12%, red border at 25% (as before #81; Enes kept it) |
+| `N high` | orange text `#FFA877` on `#F0884D` at 12%, border at 28% |
+| `N medium` | yellow text `#D6C05A` on yellow at 8%, border at 22% |
 | `clean` (nothing at medium or above, complete analysis) | `--muted` text, `--line2` border |
-| `partial` (SkillSpector reported incomplete analysis) | `--muted` text, dashed `--line2` border |
+| `partial scan` (dialog only: SkillSpector reported incomplete analysis) | `--muted` text, dashed `--line2` border |
 | `scan incomplete` (a scanner crashed, counts hidden) | amber text, dashed amber border |
 
-`partial` sits after any severity pills and replaces `clean`: a partial analysis never reads as clean. A skill
-without a completed scan shows no pill. A tooltip says the pills are static pattern
-matches, not confirmed vulnerabilities.
+`partial scan` appears only in the dialog, after any severity pills, and the Security line says in words that
+findings may be missing. Rows leave it out because it applies to most skills. A partial analysis never reads as
+clean, so a partial scan with no findings shows no pill on its row; the key says what a row without pills
+means. A skill without a completed scan shows no pill.
+A tooltip says the pills are static pattern matches, not confirmed vulnerabilities.
 
 ## Copy
 
