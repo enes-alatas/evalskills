@@ -38,12 +38,20 @@ seeded=$(curl -sf "$BASE/api/skills" | jq length) || fail "/api/skills unreadabl
 [ "$seeded" -gt 0 ] || fail "/api/skills lists no skills"
 echo "booted: $seeded catalog skills"
 
-curl -sf -X POST -H 'Content-Type: application/json' \
-  -d "{\"url\": \"https://github.com/$REPO\"}" "$BASE/api/discover" | jq -e --arg p "$SKILL" \
-  '.skills | map(.path) | index($p) != null' >/dev/null || fail "discover did not list $SKILL"
-curl -sf -X POST -H 'Content-Type: application/json' \
-  -d "{\"repo\": \"$REPO\", \"paths\": [\"$SKILL\"]}" "$BASE/api/submit" | jq -e \
-  '.submitted[0].job != null' >/dev/null || fail "submit did not queue a job"
+# POST a JSON body; sets CODE and BODY so a failure can say what the server answered (#85).
+post() {
+  local out
+  out=$(curl -s -w '\n%{http_code}' -X POST -H 'Content-Type: application/json' -d "$2" "$BASE$1" || true)
+  CODE=${out##*$'\n'}
+  BODY=${out%$'\n'*}
+}
+said() { echo "HTTP ${CODE:-none}: $(head -c 2000 <<<"$BODY")"; }
+
+post /api/discover "{\"url\": \"https://github.com/$REPO\"}"
+jq -e --arg p "$SKILL" '.skills | map(.path) | index($p) != null' <<<"$BODY" >/dev/null 2>&1 ||
+  fail "discover did not list $SKILL; $(said)"
+post /api/submit "{\"repo\": \"$REPO\", \"paths\": [\"$SKILL\"]}"
+jq -e '.submitted[0].job != null' <<<"$BODY" >/dev/null 2>&1 || fail "submit did not queue a job; $(said)"
 
 id=$(jq -rn --arg s "$REPO:$SKILL" '$s | @uri')
 echo "waiting for $REPO:$SKILL"
