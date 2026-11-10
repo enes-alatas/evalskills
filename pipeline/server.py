@@ -194,6 +194,33 @@ def public_eval(rec):
     return r
 
 
+def mark_collisions(rows):
+    """Give rows that share a name and repo a `where` label that tells them apart.
+
+    Each row gets the shortest trailing part of its parent folder that no other row in its group shares, so
+    `a/skills/x` and `b/skills/x` become `a/skills` and `b/skills`. A whole parent counts as unique unless another
+    row has the same parent (`skills/x` and `a/skills/x` become `skills` and `a/skills`). If two rows share a parent,
+    they get their full paths.
+    Rows without a collision get no label.
+    """
+    groups = {}
+    for r in rows:
+        groups.setdefault((r["name"], r["repo"]), []).append(r)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        parents = [[p for p in r["path"].split("/") if p not in ("", ".")][:-1] for r in group]
+        for i, r in enumerate(group):
+            mine, label = parents[i], None
+            for k in range(1, len(mine) + 1):
+                # At full length the label is the whole parent; it only clashes with an identical parent.
+                if all(o[-k:] != mine[-k:] or (k == len(mine) and o != mine) for j, o in enumerate(parents) if j != i):
+                    label = "/".join(mine[-k:])
+                    break
+            r["where"] = label or (r["path"] if r["path"] not in ("", ".") else "repo root")
+    return rows
+
+
 def security_level(t1):
     t1 = t1 or {}
     sec = t1.get("security") or {}
@@ -421,7 +448,7 @@ class H(BaseHTTPRequestHandler):
             )
         if p == "/api/skills":
             with db() as c:
-                rows = [skill_row(c, s) for s in c.execute("SELECT * FROM skills")]
+                rows = mark_collisions([skill_row(c, s) for s in c.execute("SELECT * FROM skills")])
             return self.send(200, rows)
         if p.startswith("/api/skills/"):
             sid = p[len("/api/skills/") :]

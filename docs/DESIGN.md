@@ -18,7 +18,8 @@ is the product, so everything else stays out of its way.
 - No gradients, glows, dot grids, blobs, emoji or uppercase tracked labels. Pills are used for one thing only:
   security findings (see Security pills).
 - Signature detail: every result shows `owner/repo/path @ <short sha>`, the exact commit evaluated, in the result
-  view. Rows show `owner/repo` only (#81).
+  view. Rows show `owner/repo` only (#81). When rows share a name and repo, each also shows the shortest folder that
+  tells it apart, such as `.agents/skills` (#91).
 
 ## Colour
 
