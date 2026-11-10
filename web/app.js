@@ -349,6 +349,11 @@ async function lookup(ev) {
     const max = state.meta.limits.skills_per_submission;
     $("#found-meta").textContent = `${n} skill${n > 1 ? "s" : ""} found at ${short(res.commit)}. `
       + (todo === 0 ? "All are up to date on the board." : `${done ? `${done} up to date. ` : ""}Choose up to ${max} to evaluate.`);
+    // A cut list (#87) leads with the real total, then says how to narrow it.
+    if (res.truncated) {
+      $("#found-meta").textContent = `${res.total} skills found at ${short(res.commit)}, showing the first ${n}. `
+        + `Paste a subfolder URL (…/tree/<branch>/<folder>) to see the rest. ${done ? `${done} up to date. ` : ""}Choose up to ${max} to evaluate.`;
+    }
     // Skills that need a run first, then the up-to-date ones.
     const order = [...res.skills].sort((a, b) => a.current - b.current);
     $("#found-list").innerHTML = order.map((s, i) => {
