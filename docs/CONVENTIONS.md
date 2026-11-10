@@ -11,6 +11,13 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - **Review:** a peer agent reviews in the shared chat and on the PR. Enes reviews and merges last. A review ends with
   exactly one of "approved at `<sha>`; merge as-is" or "notes to fold; not ready". A new push voids the approval, and
   the author re-pings the reviewer.
+- **Agree visual designs first.** For a visual change, settle the design with Enes in the issue thread, with
+  screenshots or a sketch, before the PR opens.
+- **Same scope, same PR.** Feedback that falls inside an open PR's scope is folded into that PR, and its issue body is
+  amended with the date. This holds even when the PR is already approved: the new push voids the approval, and the
+  author re-pings the reviewer. GitHub merges the head, not the approved SHA, so if the merge request is already
+  with Enes, the author tells the reviewer before pushing. The reviewer withdraws the request and sends a new one
+  only after re-approving. Only work outside the PR's scope gets a new issue.
 - **The merge request comes from the reviewer**, together with the final approval and the PR link. Authors never ask.
   Optional fixes are either declined on the PR or folded in and re-approved, so the reviewer always pings last.
 - **Rebase-merge only.** Commits land verbatim, so each one is atomic, builds, passes tests on its own, and is a
@@ -33,7 +40,8 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
   `bug` and `security` also carry `severity:critical|high|medium|low`.
 - The type names the branch: bug → `fix/`, new feature → `feat/`, improvement → `feat/` or `refactor/`,
   chore → `chore/`, documentation → `docs/`, security → `fix/`.
-- **One PR, one issue.** An "and" joining two deliverables means two issues.
+- **One PR, one issue.** An "and" joining two deliverables means two issues. This splits separate deliverables, not
+  refinements of the one under review.
 - **The issue body is the spec of record.** Whoever records a decision amends the body, dated.
 - **A feature lists acceptance scenarios**, one per line as `WHEN <situation> THEN <what is seen>`, each naming its
   check (a test, a screenshot, or a manual check the reviewer runs). The PR proves each one.
