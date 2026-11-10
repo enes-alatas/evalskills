@@ -87,6 +87,26 @@ def init_db():
         c.execute("UPDATE jobs SET status='queued', started_at=NULL WHERE status='running'")
 
 
+def inside(repo_dir, path):
+    """True if path names a SKILL.md folder inside repo_dir (no escaping the clone)."""
+    sd = (repo_dir / path).resolve()
+    return (str(sd) + "/").startswith(str(repo_dir) + "/") and (sd / "SKILL.md").is_file()
+
+
+def current_paths(repo, paths, repo_dir):
+    """Listed skills whose content matches a completed result at this evaluator (#83): submitting them would only
+    reuse that result, so they don't count toward the submission limit and get no job. If the evaluator version is
+    unknown, every path counts as needing a run."""
+    with db() as c:
+        listed = [p for p in paths if c.execute("SELECT 1 FROM skills WHERE id=?", (skill_id(repo, p),)).fetchone()]
+    try:
+        with GIT_LOCK:  # no fetch, reset or prune may change the clone mid-hash
+            return ev.up_to_date(repo, [p for p in listed if inside(repo_dir, p)], repo_dir)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        return set()
+
+
 def skill_id(repo, path):
     return f"{repo}:{path}"
 
@@ -451,6 +471,10 @@ class H(BaseHTTPRequestHandler):
                 for sk in res["skills"]:
                     s = c.execute("SELECT 1 FROM skills WHERE id=?", (skill_id(res["repo"], sk["path"]),)).fetchone()
                     sk["listed"] = bool(s)
+            repo_dir = (ev.CACHE / res["repo"].replace("/", "__")).resolve()
+            current = current_paths(res["repo"], [sk["path"] for sk in res["skills"] if sk["listed"]], repo_dir)
+            for sk in res["skills"]:
+                sk["current"] = sk["path"] in current
             return self.send(200, res)
         if self.path == "/api/submit":
             repo, paths = str(b.get("repo", "")), b.get("paths") or []
@@ -459,11 +483,13 @@ class H(BaseHTTPRequestHandler):
                 category = "other"
             if not ev.REPO_RE.match(repo) or not isinstance(paths, list) or not paths:
                 return self.send(400, {"error": "Choose at least one skill"})
-            if len(paths) > MAX_SKILLS_PER_SUBMISSION:
-                return self.send(400, {"error": f"At most {MAX_SKILLS_PER_SUBMISSION} skills per submission"})
+            paths = list(dict.fromkeys(str(p).strip("/") or "." for p in paths))
             repo_dir = (ev.CACHE / repo.replace("/", "__")).resolve()
             if not repo_dir.is_dir():
                 return self.send(400, {"error": "Look up the repository first"})
+            if len(paths) > disc.MAX_SKILLS_LISTED:
+                return self.send(400, {"error": "Too many skills in one request"})
+            # Queue and rate limits come before any hashing, so a client over its limit costs no disk reads.
             with db() as c:
                 if (
                     c.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
@@ -472,14 +498,23 @@ class H(BaseHTTPRequestHandler):
                     return self.send(503, {"error": "Evaluation queue is full; try again later."})
                 if not rate_ok(c, client, "submit", SUBMISSIONS_PER_HOUR_PER_CLIENT):
                     return self.send(429, {"error": "Too many submissions; try again later."})
+            # The limit counts only skills that need a run; up-to-date ones are skipped below (#83).
+            current = current_paths(repo, paths, repo_dir)
+            if len(paths) - len(current) > MAX_SKILLS_PER_SUBMISSION:
+                return self.send(
+                    400, {"error": f"At most {MAX_SKILLS_PER_SUBMISSION} new or changed skills per submission"}
+                )
+            with db() as c:
                 out = []
                 for path in paths:
-                    path = str(path).strip("/") or "."
-                    sd = (repo_dir / path).resolve()
-                    if not (str(sd) + "/").startswith(str(repo_dir) + "/") or not (sd / "SKILL.md").is_file():
+                    if not inside(repo_dir, path):
                         out.append({"path": path, "error": "no SKILL.md"})
                         continue
                     sid = skill_id(repo, path)
+                    if path in current:
+                        out.append({"path": path, "skill_id": sid, "note": "up to date"})
+                        continue
+                    sd = (repo_dir / path).resolve()
                     if not c.execute("SELECT 1 FROM skills WHERE id=?", (sid,)).fetchone():
                         fm = disc.frontmatter((sd / "SKILL.md").read_text(errors="replace")[:20000])
                         c.execute(
