@@ -16,6 +16,7 @@ scripts/skill_gate.py
 .github/security-review-paths
 scripts/secret-scan.sh
 scripts/security-paths.sh
+scripts/deploy-smoke.sh
 .gitleaks.toml
 pyproject.toml
 .claude/hooks/*
