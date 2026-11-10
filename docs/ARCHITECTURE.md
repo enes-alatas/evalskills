@@ -33,5 +33,5 @@ overspending.
 - More traffic: add web replicas behind Caddy, and move from SQLite to Postgres.
 
 ## Open items
-- Host specs (`nproc`, `free -g`, `uname -r`) and the name of Caddy's Docker network.
+- Host specs (`nproc`, `free -g`, `uname -r`).
 - A model key for live runs.

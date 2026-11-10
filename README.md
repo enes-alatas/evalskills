@@ -52,9 +52,10 @@ python3 -I pipeline/server.py --port 8080
 Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBMISSIONS_PER_HOUR`,
 `DISCOVERIES_PER_HOUR` and `TIER1_TIMEOUT`. Put the server behind a TLS reverse proxy that sets
 `X-Forwarded-For` for per-client rate limits. The server believes that header only from `TRUSTED_PROXIES` (default:
-loopback only), and takes the entry `TRUSTED_PROXY_HOPS` (default 1) places from the right. **In a deployment, pin
-Caddy to a fixed address on the `web` network and set `TRUSTED_PROXIES` to it in `deploy/.env`.** If it is not set,
-the app sees every visitor as Caddy and they all share one rate-limit bucket.
+loopback only), and takes the entry `TRUSTED_PROXY_HOPS` (default 1) places from the right. `deploy/compose.yaml` sets
+it for you: Caddy runs on the host and proxies to `127.0.0.1:8088`, so its requests arrive from the gateway of the
+app's own bridge network, and that gateway is the one trusted address. Without a trusted proxy, the app sees every
+visitor as the proxy and they all share one rate-limit bucket.
 
 ## API
 
@@ -75,9 +76,10 @@ performance shows as "not run" and is never estimated.
 
 ## Deploy (static only, not yet deployed)
 
-`deploy/Dockerfile` pins SkillEvaluator, and `deploy/compose.yaml` runs the app as one hardened container behind a
-TLS reverse proxy. Copy `deploy/env.example` to `deploy/.env`, then run
-`docker compose -f deploy/compose.yaml up -d --build`. Untrusted skill code never executes on the app host. The live
+`deploy/Dockerfile` pins SkillEvaluator, and `deploy/compose.yaml` runs the app as one hardened container, published
+on `127.0.0.1:8088` only, behind the host's Caddy. Copy `deploy/env.example` to `deploy/.env` (no edits needed), run
+`docker compose -f deploy/compose.yaml up -d --build`, then add `skills.example.com { reverse_proxy 127.0.0.1:8088 }`
+to the Caddyfile and reload Caddy. Untrusted skill code never executes on the app host. The live
 sandbox runs separately, as described in `docs/ARCHITECTURE.md`. Hosting notes: `docs/HOSTING.md`.
 
 ## Contributing
