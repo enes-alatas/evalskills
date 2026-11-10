@@ -76,7 +76,7 @@ function pills(s, inDialog) {
 function rowHtml(s, rank) {
   return `<button class="row" data-id="${esc(s.id)}" aria-haspopup="dialog">
     <span class="rank">${rank ?? ""}</span>
-    <span class="nm">${esc(s.name)}<span class="meta"><span class="src">${esc(s.repo)}</span>${pills(s)}</span></span>
+    <span class="nm">${esc(s.name)}<span class="meta"><span class="src">${esc(s.repo)}</span>${s.where ? `<span class="where" title="${esc(s.path)}">${esc(s.where)}</span>` : ""}${pills(s)}</span></span>
     ${right(s)}</button>`;
 }
 
