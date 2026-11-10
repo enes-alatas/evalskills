@@ -7,7 +7,7 @@ import urllib.request
 
 from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env  # noqa: F401
 
-MAX_SKILLS_LISTED = 200
+MAX_SKILLS_LISTED = 1000  # names and paths only; NVIDIA/skills had 450 on 2026-11-10 (#87)
 
 URL_RE = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?"
@@ -84,20 +84,28 @@ def discover(url: str) -> dict:
     except RepoTooLarge as e:
         raise DiscoveryError(str(e)) from e
     root = d.resolve()
-    skills = []
+    skills, total = [], 0
     for p in sorted(root.rglob("SKILL.md")):
         if ".git" in p.parts or p.is_symlink():
             continue
         rel = str(p.parent.relative_to(root)) if p.parent != root else "."
         if sub and not (rel == sub.strip("/") or rel.startswith(sub.strip("/") + "/")):
             continue
+        total += 1
+        if len(skills) >= MAX_SKILLS_LISTED:
+            continue  # keep counting, so the form can say how many were left out
         fm = frontmatter(p.read_text(errors="replace")[:20000])
         skills.append(
             {"path": rel, "name": fm.get("name") or p.parent.name, "description": (fm.get("description") or "")[:300]}
         )
-        if len(skills) >= MAX_SKILLS_LISTED:
-            break
-    return {"repo": repo, "commit": commit, "default_branch": meta.get("default_branch"), "skills": skills}
+    return {
+        "repo": repo,
+        "commit": commit,
+        "default_branch": meta.get("default_branch"),
+        "skills": skills,
+        "total": total,
+        "truncated": total > len(skills),
+    }
 
 
 if __name__ == "__main__":
