@@ -43,6 +43,9 @@ ENV_ALLOW = {
     "no_proxy",
     "NO_PROXY",
     "UV_CACHE_DIR",
+    "UV_FROZEN",
+    "UV_NO_SYNC",
+    "UV_PYTHON_PREFERENCE",
     "XDG_CACHE_HOME",
 }
 # Opt-in provider vars, passed only for LLM-backed tiers.
@@ -62,7 +65,12 @@ REPO_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?\Z)(?!-)[A-Za-z0-
 
 
 def sh(cmd, **kw):
-    return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw).stdout.strip()
+    try:
+        return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw).stdout.strip()
+    except subprocess.CalledProcessError as e:
+        # The traceback alone hides why a tool failed; log the tail of its stderr (our own tools, never a skill's).
+        print(f"command failed ({e.returncode}): {cmd[:4]} stderr: {(e.stderr or '')[-2000:]}", file=sys.stderr)
+        raise
 
 
 def git_env():

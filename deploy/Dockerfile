@@ -27,6 +27,10 @@ RUN git clone https://github.com/NVIDIA/SkillEvaluator.git "$SKILLEVALUATOR_DIR"
     # Fail the build if the scanners were not provisioned (they must not be fetched at runtime).
     && ls /home/app/.local/share/skillevaluator/runtimes/skillspector /home/app/.local/share/skillevaluator/runtimes/gitleaks
 
+# At runtime the evaluator's venv is final and the root filesystem is read-only: `uv run` must use the venv as built,
+# never re-lock or re-sync it (that writes into $SKILLEVALUATOR_DIR, and fails there) (#75).
+ENV UV_NO_SYNC=1 \
+    UV_FROZEN=1
 COPY --chown=app:app pipeline/ /home/app/inventory/pipeline/
 COPY --chown=app:app web/ /home/app/inventory/web/
 COPY --chown=app:app docs/ /home/app/inventory/docs/
