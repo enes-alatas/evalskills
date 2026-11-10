@@ -217,7 +217,7 @@ async function openResult(id, opener) {
   const d = dlg();
   if (!d.open) {
     d.showModal();
-    d.scrollTop = 0;
+    $("#r-body").scrollTop = 0;
     requestAnimationFrame(() => d.classList.add("in"));
   }
   await fetchDetail(id);
