@@ -1,8 +1,8 @@
 # Phase 1 (static Tier 1 only) on a shared VPS. Untested: no Docker on the dev workstation.
 # Usage: cp env.example .env && docker compose -f deploy/compose.yaml up -d --build
-# Caddy (on the same "web" network as this service):
+# Caddy runs on the host as a system daemon and proxies to the loopback port published below:
 #   skills.example.com {
-#     reverse_proxy evalskills:8080
+#     reverse_proxy 127.0.0.1:8088
 #   }
 services:
   evalskills:
@@ -15,6 +15,9 @@ services:
       UV_FROZEN: "1"                         # never re-resolve dependencies at runtime
       TMPDIR: /tmp
       RESULTS_PATH: /home/app/inventory/data/results.jsonl   # writable volume, seeded from catalog/ on first start
+      # Caddy's requests reach the container from this network's gateway (Docker's port proxy / NAT), so that is the
+      # one address whose X-Forwarded-For the app believes. Set here so it always matches the network below.
+      TRUSTED_PROXIES: "${EVALSKILLS_GATEWAY:-172.31.250.1}/32"
     # --- isolation from the host and the other services ---
     user: "10001:10001"
     read_only: true
@@ -31,11 +34,16 @@ services:
       - reports:/home/app/inventory/reports
       - cache:/home/app/inventory/cache
       - uvcache:/home/app/.cache/uv
-    networks: [web]                          # no published ports: only Caddy reaches it
+    ports: ["127.0.0.1:${EVALSKILLS_PORT:-8088}:8080"]   # loopback only: reachable through the host's Caddy alone
+    networks: [evalskills]
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
 networks:
-  web: { external: true }                    # the network Caddy is attached to; rename to match
+  evalskills:                                # this service alone; a fixed subnet makes the trusted gateway known
+    ipam:
+      config:
+        - subnet: "${EVALSKILLS_SUBNET:-172.31.250.0/24}"
+          gateway: "${EVALSKILLS_GATEWAY:-172.31.250.1}"
 
 volumes: { data: {}, reports: {}, cache: {}, uvcache: {} }
 

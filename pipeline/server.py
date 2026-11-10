@@ -35,8 +35,9 @@ DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30
 
 CACHE_MAX_AGE_HOURS = float(os.environ.get("CACHE_MAX_AGE_HOURS", "6"))
 CACHE_MAX_REPOS = int(os.environ.get("CACHE_MAX_REPOS", "40"))  # x 300 MB per clone bounds the cache volume
-# Who may set X-Forwarded-For. Loopback only by default: the deployment pins Caddy to a fixed address on the web
-# network and sets TRUSTED_PROXIES to it (Enes, 2026-11-08). Unset there, every visitor shares one rate-limit bucket.
+# Who may set X-Forwarded-For. Loopback only by default. In deploy/compose.yaml the host's Caddy reaches the app
+# through a loopback-published port, so compose sets this to the app network's gateway (#69). Unset there, every
+# visitor shares one rate-limit bucket.
 DEFAULT_TRUSTED_PROXIES = "127.0.0.0/8,::1/128"
 
 

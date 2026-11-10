@@ -3,8 +3,11 @@
 The design is in `docs/ARCHITECTURE.md` and its ADRs. This file lists what the host needs.
 
 ## Static release (zone A only, no skill code executed)
-- A Linux host with Docker and a TLS reverse proxy (Caddy) that sets `X-Forwarded-For`. 2 vCPU, 4 GB RAM and 40 GB
-  disk are enough.
+- A Linux host with Docker and a TLS reverse proxy (Caddy, as a host daemon) that sets `X-Forwarded-For` and
+  proxies to `127.0.0.1:8088`. 2 vCPU, 4 GB RAM and 40 GB disk are enough.
+- Docker Engine 28 or later. Older engines let hosts on the same L2 network route straight to the container's
+  bridge address, which bypasses the `127.0.0.1` port binding. Check with
+  `docker version --format '{{.Server.Version}}'`.
 - Egress: github.com, objects.githubusercontent.com, pypi.org, files.pythonhosted.org.
 - No provider credentials on the app container.
 - Guards already in the app: a 300 MB repo cap, shallow clones with symlinks off, scans on a snapshot copy, a 600 s

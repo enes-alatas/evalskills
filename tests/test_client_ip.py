@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 
@@ -49,8 +50,17 @@ def test_by_default_only_loopback_is_trusted(monkeypatch):
     assert server.client_ip(CADDY, "198.51.100.7") == CADDY  # a private-range peer is not trusted unless named
 
 
-def test_the_env_example_placeholder_refuses_to_parse():
-    example = (Path(__file__).resolve().parents[1] / "deploy" / "env.example").read_text()
-    (value,) = [line.split("=", 1)[1] for line in example.splitlines() if line.startswith("TRUSTED_PROXIES=")]
-    with pytest.raises(ValueError):
-        server.parse_networks(value)
+def test_compose_trusts_exactly_its_own_network_gateway():
+    # Caddy runs on the host and reaches the app through the published loopback port, so its requests arrive from
+    # the gateway of the network compose defines. The trusted proxy must be that gateway and nothing wider (#69).
+    deploy = Path(__file__).resolve().parents[1] / "deploy"
+    compose = (deploy / "compose.yaml").read_text()
+    default = r"\$\{EVALSKILLS_GATEWAY:-([0-9.]+)\}"
+    (trusted,) = re.findall(r'TRUSTED_PROXIES: "' + default + r'/32"', compose)
+    (gateway,) = re.findall(r'gateway: "' + default + r'"', compose)
+    (subnet,) = re.findall(r'subnet: "\$\{EVALSKILLS_SUBNET:-([0-9./]+)\}"', compose)
+    assert trusted == gateway
+    assert server.ipaddress.ip_address(gateway) in server.ipaddress.ip_network(subnet)
+    assert server.parse_networks(trusted + "/32")
+    assert re.search(r'ports: \["127\.0\.0\.1:\$\{EVALSKILLS_PORT:-\d+\}:8080"\]', compose), "loopback-only port"
+    assert "TRUSTED_PROXIES=" not in (deploy / "env.example").read_text(), "compose sets it; .env would be ignored"
