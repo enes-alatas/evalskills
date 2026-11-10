@@ -33,8 +33,9 @@ never combines them into a single number.
   finding. The raw counts are kept in the record.
 * These are static pattern matches. They point to places a human should look, not to confirmed vulnerabilities.
 * `partial`: SkillSpector often reports incomplete analysis because SKILL.md code samples mention example files
-  such as `document.pdf` that it cannot resolve. In that case the leaderboard says `partial`. It does not hide the issue
-  or treat it as a pass.
+  such as `document.pdf` that it cannot resolve. In that case the result view says `partial scan` and explains that
+  findings may be missing. Leaderboard rows leave it out, because it applies to most skills, but a partial scan
+  never shows `clean`. It does not hide the issue or treat it as a pass.
 * Schema governance findings (for example, missing `metadata.author`, which the default NVIDIA publication policy rates
   high) are kept out of the security counts.
 

@@ -6,7 +6,7 @@
 :root {
   --bg: #07080b; --card: #0e1015; --raised: #161922; --line: #eef0f514; --line2: #eef0f526;
   --fg: #eef0f5; --fg2: #a3a9b8; --muted: #7a8296;
-  --accent: #5fd4c4; --amber: #d9a55b; --red: #e5484d; --dim: #3a4050;
+  --accent: #5fd4c4; --amber: #d9a55b; --orange: #f0884d; --yellow: #d6c05a; --red: #e5484d; --dim: #3a4050;
   --sans: Geist, ui-sans-serif, system-ui, sans-serif;
   --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
@@ -23,7 +23,14 @@ a:hover { text-decoration-color: var(--fg2); }
 .center { text-align: center; padding: 32px 0; }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 
-.col { max-width: 760px; margin: 0 auto; padding: 32px max(20px, env(safe-area-inset-right)) 96px max(20px, env(safe-area-inset-left)); }
+.col { max-width: 760px; margin: 0 auto; padding: 32px max(20px, env(safe-area-inset-right)) 0 max(20px, env(safe-area-inset-left)); }
+/* Only the leaderboard scrolls (#81): the column fills the viewport and the board takes what is left. If the header
+   grows past the viewport (the add form on a short screen), the column scrolls instead. */
+.col { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow-y: auto; }
+.col > .top, .col > .head { flex: none; }
+.col > section { flex: 1 1 0; min-height: 280px; display: flex; flex-direction: column; }
+.col > section > * { flex: none; }
+.col > section > .scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: calc(48px + env(safe-area-inset-bottom)); margin: 0 -8px; padding-left: 8px; padding-right: 8px; }
 
 /* Top bar and header */
 .top { display: flex; align-items: center; justify-content: space-between; height: 40px; }
@@ -105,13 +112,20 @@ button.why:hover { text-decoration-color: var(--fg2); }
 
 /* Security pills: medium-or-above distinct finding types from static scanners */
 .pill { display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 9px; font-family: var(--mono); font-size: 11px; line-height: 18px; white-space: nowrap; border: 1px solid transparent; }
-.pill.sev-hi { color: #ff8589; background: #e5484d1f; border-color: #e5484d40; }
-.pill.sev-med { color: var(--amber); background: #d9a55b1a; border-color: #d9a55b3d; }
+.pill.sev-critical { color: #ff8589; background: #e5484d1f; border-color: #e5484d40; }
+.pill.sev-high { color: #ffa877; background: #f0884d1f; border-color: #f0884d47; }
+.pill.sev-medium { color: var(--yellow); background: #d6c05a14; border-color: #d6c05a38; }
 .pill.sev-ok { color: var(--muted); border-color: var(--line2); }
 .pill.sev-part { color: var(--muted); border: 1px dashed var(--line2); }
 .pill.sev-inc { color: var(--amber); border: 1px dashed #d9a55b66; }
-.f.sev-hi { color: #ff8589; }
-.f.sev-med { color: var(--amber); }
+.secs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.sec-label { color: var(--muted); font-family: var(--sans); font-size: 12px; }
+.sec-label::after { content: ":"; }
+/* Severity text, one colour per level (dialog security line, findings, key) */
+.sv-critical { color: #ff8589; }
+.sv-high { color: #ffa877; }
+.sv-medium { color: var(--yellow); }
+.sv-low, .sv-info { color: var(--muted); }
 .score { font-family: var(--mono); font-size: 18px; font-variant-numeric: tabular-nums; text-align: right; }
 
 /* Status: text with a dot */
@@ -181,8 +195,10 @@ summary:hover { color: var(--fg2); }
 
 @media (max-width: 640px) {
   .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .col { padding: 16px max(16px, env(safe-area-inset-right)) 64px max(16px, env(safe-area-inset-left)); }
-  .head { padding: 32px 0 32px; }
+  .col { padding: 16px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .col > section > .scroll { margin: 0 -4px; padding-left: 4px; padding-right: 4px; }
+  .head { padding: 16px 0 20px; }
+  .lede { margin-bottom: 16px; font-size: 14px; }
   h1 { font-size: 26px; line-height: 32px; }
   .row { grid-template-columns: 24px 1fr auto; }
   .detail { grid-template-columns: 1fr; margin-left: 0; gap: 8px; }

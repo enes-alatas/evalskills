@@ -51,26 +51,32 @@ function right(s) {
 }
 
 // Security pills: distinct finding types at medium or above (docs/METHODOLOGY.md), only for a completed scan.
-const SEV = [["critical", "sev-hi"], ["high", "sev-hi"], ["medium", "sev-med"]];
-function pills(s) {
+// Each severity has its own colour (#81): critical red, high orange, medium yellow.
+const SEV = ["critical", "high", "medium"];
+const TIP = "Static scanner pattern matches, not confirmed vulnerabilities";
+const isPartial = (sec) => !!(sec.incomplete && sec.incomplete.length);
+// Rows (#81): a muted "Security" label, then the pills, wrapped as one group so the label never ends a line alone.
+// "partial scan" shows only in the dialog, which explains it. "clean" only for a complete analysis: a partial scan
+// never reads as clean (docs/METHODOLOGY.md).
+function pills(s, inDialog) {
   const sec = s.security;
   if (s.state !== "completed" || !sec) return "";
-  const tip = "Static scanner pattern matches, not confirmed vulnerabilities";
-  if (sec.scanner_error) return `<span class="pill sev-inc" title="A scanner crashed, so counts are incomplete">scan incomplete</span>`;
-  const on = SEV.filter(([k]) => sec[k]);
-  const partial = sec.incomplete && sec.incomplete.length
-    ? `<span class="pill sev-part" title="Partial analysis (${esc(sec.incomplete.join(", "))}), so findings may be missing">partial</span>`
+  const group = (html) => (inDialog ? html : `<span class="secs"><span class="sec-label">Security</span>${html}</span>`);
+  if (sec.scanner_error) return group(`<span class="pill sev-inc" title="A scanner crashed, so counts are incomplete">scan incomplete</span>`);
+  const on = SEV.filter((k) => sec[k]);
+  const partial = inDialog && isPartial(sec)
+    ? `<span class="pill sev-part" title="A scanner could not finish (${esc(sec.incomplete.join(", "))}), so findings may be missing">partial scan</span>`
     : "";
-  // "clean" only when the analysis was complete; a partial scan never reads as clean (docs/METHODOLOGY.md).
-  if (!on.length) return partial || `<span class="pill sev-ok" title="No findings at medium or above. ${tip}">clean</span>`;
-  return on.map(([k, cls]) => `<span class="pill ${cls}" title="${sec[k]} distinct ${k} finding type${sec[k] > 1 ? "s" : ""}. ${tip}">${sec[k]} ${k}</span>`).join("") + partial;
+  if (!on.length && isPartial(sec)) return partial;
+  if (!on.length) return group(`<span class="pill sev-ok" title="No findings at medium or above. ${TIP}">clean</span>`);
+  // Counts are coerced to numbers before they reach innerHTML.
+  return group(on.map((k) => { const n = Number(sec[k]); return `<span class="pill sev-${k}" title="${n} distinct ${k} finding type${n > 1 ? "s" : ""}. ${TIP}">${n} ${k}</span>`; }).join("")) + partial;
 }
 
 function rowHtml(s, rank) {
-  const sha = short(s.commit);
   return `<button class="row" data-id="${esc(s.id)}" aria-haspopup="dialog">
     <span class="rank">${rank ?? ""}</span>
-    <span class="nm">${esc(s.name)}<span class="meta"><span class="src">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span>${pills(s)}</span></span>
+    <span class="nm">${esc(s.name)}<span class="meta"><span class="src">${esc(s.repo)}</span>${pills(s)}</span></span>
     ${right(s)}</button>`;
 }
 
@@ -108,14 +114,16 @@ function securityLine(s, t1) {
     return `<div class="br"><b>Security</b><span class="f">${status("inconclusive", "Incomplete")}</span>
       <span class="d">A scanner crashed during this run, so counts would be incomplete and are not shown</span></div>`;
   }
-  const lvl = ["critical", "high", "medium"].filter((k) => sec[k]).map((k) => `${sec[k]} ${k}`);
-  const fig = lvl.length ? lvl.join(", ") : "None";
-  const partial = sec.incomplete.length ? ` Partial analysis: ${esc(sec.incomplete.join(", "))}.` : "";
-  const top = sec.top.length
-    ? `<details><summary>Findings</summary><ul class="checks">${sec.top.map((f) => `<li><span>${esc(f.title)}${f.count > 1 ? ` <span class="hint">×${f.count}</span>` : ""}</span><span class="mono">${esc(f.severity)}</span></li>`).join("")}</ul></details>`
+  // Each part keeps its own severity colour (#81).
+  const lvl = SEV.filter((k) => sec[k]);
+  const fig = lvl.length ? lvl.map((k) => `<span class="sv-${k}">${Number(sec[k])} ${k}</span>`).join(", ") : "None";
+  const partial = isPartial(sec)
+    ? ` Partial scan: ${esc(sec.incomplete.join(", "))} could not finish its analysis, so findings may be missing.`
     : "";
-  const tone = sec.critical || sec.high ? "sev-hi" : sec.medium ? "sev-med" : "";
-  return `<div class="br"><b>Security</b><span class="f ${tone}">${esc(fig)}</span>
+  const top = sec.top.length
+    ? `<details><summary>Findings</summary><ul class="checks">${sec.top.map((f) => `<li><span>${esc(f.title)}${f.count > 1 ? ` <span class="hint">×${f.count}</span>` : ""}</span><span class="mono sv-${esc(f.severity)}">${esc(f.severity)}</span></li>`).join("")}</ul></details>`
+    : "";
+  return `<div class="br"><b>Security</b><span class="f">${fig}</span>
     <span class="d">${lvl.length ? "Distinct finding types at medium or above." : "No findings at medium or above."} Static pattern matches, not confirmed vulnerabilities.${partial}</span>${top}</div>`;
 }
 
@@ -197,7 +205,7 @@ function renderResult() {
   if (!s) return false;
   const sha = short(s.commit);
   $("#r-title").textContent = s.name;
-  $("#r-meta").innerHTML = `<span class="src">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span>${pills(s)}`;
+  $("#r-meta").innerHTML = `<span class="src">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span>${pills(s, true)}`;
   $("#r-body").innerHTML = detailHtml(s);
   return true;
 }
