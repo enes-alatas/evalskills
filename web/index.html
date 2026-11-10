@@ -31,8 +31,13 @@
       </div>
       <p class="err" id="add-err" hidden></p>
       <div id="found" hidden>
-        <ul id="found-list" class="picks"></ul>
         <p class="hint" id="found-meta"></p>
+        <div class="pick-tools">
+          <input id="found-q" type="search" placeholder="Filter skills" aria-label="Filter skills" autocomplete="off" spellcheck="false">
+          <button type="button" class="link" id="select-all">Select all</button>
+        </div>
+        <ul id="found-list" class="picks"></ul>
+        <p class="hint" id="found-limit" hidden></p>
         <div class="pick-cat">
           <label for="cat">Category</label>
           <select id="cat"></select>

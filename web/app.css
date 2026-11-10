@@ -57,12 +57,21 @@ select { background: var(--card); }
 .bar button { height: 40px; }
 .picks { list-style: none; margin: 12px 0 0; padding: 4px 16px; border: 1px solid var(--line); border-radius: 12px; max-height: 320px; overflow: auto; }
 .picks li { display: flex; align-items: center; gap: 12px; min-height: 40px; padding: 8px 0; }
-.picks li + li { border-top: 1px solid var(--line); }
+.picks li:not([hidden]) ~ li:not([hidden]) { border-top: 1px solid var(--line); }
 .picks input { width: 16px; height: 16px; margin: 0; padding: 0; accent-color: var(--fg); flex: none; }
 .picks label { flex: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; cursor: pointer; font-size: 14px; }
 .picks .mono { color: var(--muted); margin-left: auto; }
 .picks .hint { flex-basis: 100%; }
 #found > .hint { margin-top: 8px; text-align: center; }
+#found > #found-meta { margin-top: 12px; }
+/* Many skills (#83): a filter and "Select all" above the checklist */
+.pick-tools { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.pick-tools input { flex: 1; min-width: 0; height: 36px; background: var(--card); }
+.pick-tools input:focus-visible { outline: none; border-color: #eef0f566; }
+.pick-tools button { flex: none; height: 36px; }
+.pick-tools[hidden], .picks li[hidden] { display: none; }
+.picks li.done label { cursor: default; color: var(--fg2); }
+.picks input:disabled + label { cursor: default; }
 .pick-cat { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 16px 0; font-size: 13px; color: var(--muted); }
 #found > .primary { display: block; margin: 0 auto; height: 40px; }
 #add-cancel { display: block; margin: 12px auto 0; }
