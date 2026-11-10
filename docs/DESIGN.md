@@ -93,6 +93,10 @@ See `ref-layout.png`.
 - The GitHub mark links to the project's source. It appears only when the server sets `SOURCE_REPO_URL`.
 - **Check a skill** turns into the repo input in place, with no modal. "Find skills" lists the skills found at the
   resolved commit as a checklist, and "Evaluate N skills" queues them.
+- Repositories with many skills (#83): a filter box and "Select all" sit above the checklist. Skills that need a run
+  come first. Listed skills whose content is unchanged come last, ticked and disabled as "Up to date". The limit of 10
+  counts only skills that need a run. "Select all" ticks the visible ones up to the limit and then turns into "Clear".
+  To add a whole repository, submit 10, then look it up again.
 
 ## Statuses
 

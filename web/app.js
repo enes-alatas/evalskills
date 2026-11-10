@@ -292,11 +292,45 @@ function showAdd(on) {
 
 function addError(msg) { $("#add-err").textContent = msg; $("#add-err").hidden = false; }
 
+// The limit counts only skills that need a run (#83). Up-to-date ones show ticked and disabled, and are not sent.
+const openPicks = () => [...document.querySelectorAll("#found-list li:not(.done) input")];
+
 function updateEvaluateLabel() {
-  const n = document.querySelectorAll("#found-list input:checked").length;
+  const picks = openPicks();
+  const n = picks.filter((i) => i.checked).length;
+  const max = state.meta.limits.skills_per_submission;
+  const full = n >= max;
+  picks.forEach((i) => { i.disabled = full && !i.checked; });
+  const lim = $("#found-limit");
+  lim.hidden = !(full && picks.length > max);
+  lim.textContent = `Up to ${max} new or changed skills per submission. Look the repository up again afterwards to add more.`;
   const b = $("#submit-skills");
   b.textContent = n === 1 ? "Evaluate 1 skill" : `Evaluate ${n} skills`;
   b.disabled = n === 0;
+  // At the limit the link clears the selection instead, so a filtered view can be re-picked.
+  const sa = $("#select-all");
+  sa.textContent = full ? "Clear" : "Select all";
+  sa.disabled = !full && !picks.some((i) => !i.checked && !i.closest("li").hidden);
+}
+
+function filterFound() {
+  const q = $("#found-q").value.trim().toLowerCase();
+  document.querySelectorAll("#found-list li").forEach((li) => { li.hidden = !!q && !li.dataset.q.includes(q); });
+  updateEvaluateLabel();
+}
+
+function selectAll() {
+  const max = state.meta.limits.skills_per_submission;
+  let n = openPicks().filter((i) => i.checked).length;
+  if (n >= max) {
+    openPicks().forEach((i) => { i.checked = false; });
+    return updateEvaluateLabel();
+  }
+  for (const i of openPicks()) {
+    if (n >= max) break;
+    if (!i.checked && !i.closest("li").hidden) { i.checked = true; n++; }
+  }
+  updateEvaluateLabel();
 }
 
 async function lookup(ev) {
@@ -310,9 +344,21 @@ async function lookup(ev) {
     state.found = res;
     if (!res.skills.length) throw new Error("No SKILL.md found in this repository");
     const n = res.skills.length;
-    $("#found-meta").textContent = `${n} skill${n > 1 ? "s" : ""} found at ${short(res.commit)}. Choose up to ${state.meta.limits.skills_per_submission}`;
-    $("#found-list").innerHTML = res.skills.map((s, i) => `<li><input type="checkbox" id="sk${i}" value="${esc(s.path)}" ${n === 1 ? "checked" : ""}>
-      <label for="sk${i}">${esc(s.name)}<span class="mono">${esc(s.path)}</span>${s.listed ? `<span class="hint">Already listed, re-evaluated only if changed</span>` : ""}</label></li>`).join("");
+    const done = res.skills.filter((s) => s.current).length;
+    const todo = n - done;
+    const max = state.meta.limits.skills_per_submission;
+    $("#found-meta").textContent = `${n} skill${n > 1 ? "s" : ""} found at ${short(res.commit)}. `
+      + (todo === 0 ? "All are up to date on the board." : `${done ? `${done} up to date. ` : ""}Choose up to ${max} to evaluate.`);
+    // Skills that need a run first, then the up-to-date ones.
+    const order = [...res.skills].sort((a, b) => a.current - b.current);
+    $("#found-list").innerHTML = order.map((s, i) => {
+      const note = s.current ? "Up to date, already on the board" : s.listed ? "Changed since its last evaluation" : "";
+      return `<li${s.current ? ' class="done"' : ""} data-q="${esc(`${s.name} ${s.path}`.toLowerCase())}">
+        <input type="checkbox" id="sk${i}" value="${esc(s.path)}" ${s.current ? "checked disabled" : todo === 1 ? "checked" : ""}>
+        <label for="sk${i}">${esc(s.name)}<span class="mono">${esc(s.path)}</span>${note ? `<span class="hint">${note}</span>` : ""}</label></li>`;
+    }).join("");
+    $("#found-q").value = "";
+    $(".pick-tools").hidden = todo <= 1;
     $("#found").hidden = false;
     updateEvaluateLabel();
   } catch (err) {
@@ -321,15 +367,15 @@ async function lookup(ev) {
 }
 
 async function submitSkills() {
-  const paths = [...document.querySelectorAll("#found-list input:checked")].map((i) => i.value);
+  const paths = openPicks().filter((i) => i.checked).map((i) => i.value);
   if (!paths.length) return addError("Choose at least one skill");
   const btn = $("#submit-skills"); btn.disabled = true;
   try {
     const res = await api("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: state.found.repo, paths, category: $("#cat").value }) });
     showAdd(false);
     state.tab = "all"; state.q = ""; $("#q").value = "";
-    res.submitted.filter((x) => x.skill_id).forEach((x) => state.watch.set(x.skill_id, "queued"));
-    const first = res.submitted.find((x) => x.skill_id);
+    res.submitted.filter((x) => x.job).forEach((x) => state.watch.set(x.skill_id, "queued"));
+    const first = res.submitted.find((x) => x.job) || res.submitted.find((x) => x.skill_id);
     await load();
     if (first) await openResult(first.skill_id, $("#add-btn"));
   } catch (err) {
@@ -367,6 +413,10 @@ async function init() {
   $("#add").addEventListener("submit", lookup);
   $("#add").addEventListener("keydown", (e) => { if (e.key === "Escape") showAdd(false); });
   $("#found-list").addEventListener("change", updateEvaluateLabel);
+  $("#found-q").addEventListener("input", filterFound);
+  // Enter in the filter must not re-run the lookup (the filter sits inside the add form).
+  $("#found-q").addEventListener("keydown", (e) => { if (e.key === "Enter") e.preventDefault(); });
+  $("#select-all").addEventListener("click", selectAll);
   $("#submit-skills").addEventListener("click", submitSkills);
   const m = location.pathname.match(/^\/s\/(.+)$/);
   await load();
