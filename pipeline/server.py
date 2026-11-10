@@ -7,6 +7,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -33,6 +34,15 @@ MAX_BODY = 20_000  # bytes per POST body; fixed, not read from the environment
 SUBMISSIONS_PER_HOUR_PER_CLIENT = int(os.environ.get("SUBMISSIONS_PER_HOUR", "20"))
 DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30"))
 
+
+# The public source link in the header (#77). Only an https://github.com/OWNER/REPO URL is accepted; anything else,
+# or unset, hides the link (the repo is private until it is open-sourced).
+def source_repo_url(value: str) -> str:
+    value = (value or "").strip()
+    return value if re.fullmatch(r"https://github\.com/[A-Za-z0-9-]{1,39}/[A-Za-z0-9_.-]{1,100}", value) else ""
+
+
+SOURCE_REPO_URL = source_repo_url(os.environ.get("SOURCE_REPO_URL", ""))
 CACHE_MAX_AGE_HOURS = float(os.environ.get("CACHE_MAX_AGE_HOURS", "6"))
 CACHE_MAX_REPOS = int(os.environ.get("CACHE_MAX_REPOS", "40"))  # x 300 MB per clone bounds the cache volume
 # Who may set X-Forwarded-For. Loopback only by default. In deploy/compose.yaml the host's Caddy reaches the app
@@ -386,6 +396,7 @@ class H(BaseHTTPRequestHandler):
                     "categories": CATEGORIES,
                     "evaluator": ev.evaluator_version(),
                     "limits": {"skills_per_submission": MAX_SKILLS_PER_SUBMISSION},
+                    "source_repo_url": SOURCE_REPO_URL or None,
                 },
             )
         if p == "/api/skills":
