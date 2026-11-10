@@ -3,6 +3,8 @@
 This file is the doc of record for how evalskills looks: the web app, the repo docs and the system diagrams. Enes
 approved it step by step on 2026-11-08. Reference mockups are in `docs/design/ref-*.png`. They use sample data, not
 results.
+Enes's feedback after the first deploy (2026-11-10, #77) changed the header, the search row, the result view (now a
+dialog), motion and security pills; the reference mockups predate it.
 
 The rules adapt [unslop](https://github.com/heydamir/unslop) by Damir Sokolovsky (CC BY 4.0).
 
@@ -12,7 +14,8 @@ The page should feel exact, quiet and nocturnal: a dark page with high contrast 
 is the product, so everything else stays out of its way.
 
 - Quiet chrome: one neutral ramp and one accent, and the accent is used rarely.
-- No gradients, glows, dot grids, blobs, emoji, pills or uppercase tracked labels.
+- No gradients, glows, dot grids, blobs, emoji or uppercase tracked labels. Pills are used for one thing only:
+  security findings (see Security pills).
 - Signature detail: every result shows `owner/repo @ <short sha>`, the exact commit evaluated. It appears on rows
   and in the result view, and nowhere else.
 
@@ -64,20 +67,24 @@ There are two families and two weights (400 and 500). Both fonts are OFL, so shi
 ## Space, radius and motion
 
 - Spacing sits on a 4px grid: 4, 8, 12, 16, 24, 32, 48, 64.
-- Leaderboard rows are 56–64 tall, all the same height.
+- Leaderboard rows are 64–72 tall on desktop. On mobile, a long path and the security pills may wrap to a third
+  line.
 - Radius: 8 for buttons, inputs and tabs, 12 for the open result and panels, 14 for diagram zones. An inner radius is
   the outer radius minus the padding.
-- Motion: colour and opacity transitions only, 150 ms, `cubic-bezier(0.22, 1, 0.36, 1)`. Nothing loops, and the
-  only exception is the running indicator.
+- Motion: colour and opacity transitions, 150 ms, `cubic-bezier(0.22, 1, 0.36, 1)`. The result dialog and the
+  completion notice also move 8 px (24 px for the mobile sheet) while fading, over 180 ms. Nothing loops, except
+  the running indicator. All motion is off under `prefers-reduced-motion`.
 
 ## Layout
 
 See `ref-layout.png`.
 
 - One centered column, about 720 px wide, with the same structure on mobile and desktop.
-- From top to bottom: the wordmark, the title "Evaluate agent skills", the subtitle "Results from NVIDIA
-  SkillEvaluator, pinned to the commit tested", the **Add a skill** button, then category tabs with search on one
-  line, then the leaderboard.
+- From top to bottom: a top bar with the wordmark (Geist 20/28, 500, `--fg`) on the left and the GitHub mark on
+  the right, the title "Evaluate agent skills", the subtitle "Results from NVIDIA SkillEvaluator, pinned to the
+  commit tested", the **Add a skill** button, the category tabs, search on its own full-width row, then the
+  leaderboard.
+- The GitHub mark links to the project's source. It appears only when the server sets `SOURCE_REPO_URL`.
 - **Add a skill** turns into the repo input in place, with no modal. "Find skills" lists the skills found at the
   resolved commit as a checklist, and "Evaluate N skills" queues them.
 
@@ -98,7 +105,13 @@ A missing score is never shown as 0 and never left blank without a status.
 
 ## Result view
 
-See `ref-result-view.png`. Clicking a row opens it in place; on mobile its two columns stack.
+See `ref-result-view.png`. Clicking a row opens the result in a dialog (radius 12, `--card`, hairline border,
+black backdrop at 60%), with the skill name, `owner/repo @ sha` and the security pills in a sticky header. On
+mobile it is a bottom sheet and its two columns stack. Esc, the close button or a backdrop click closes it, and
+`/s/<id>` opens it directly.
+- After a submission, the dialog for the first submitted skill opens at once and follows queued, running and
+  completed live. When the result lands it says "Evaluation complete". If the dialog was closed meanwhile, a small
+  notice at the bottom offers "View".
 
 - **Score breakdown:** Live tasks, Structure and Security each sit on their own line with their own figure. They are
   never blended. Live shows the no-skill baseline next to it. A one-line note says what the ranking uses and why
@@ -108,6 +121,23 @@ See `ref-result-view.png`. Clicking a row opens it in place; on mobile its two c
 - **Links:** "Source at `<sha>`" and "Full report".
 - **No install line.** We provide a score and a report. We are not a skill library (Enes, 2026-11-08). This drops
   the brief's "installation instructions where verified" on purpose.
+
+## Security pills
+
+Each completed row, and the dialog header, shows security findings as small mono pills (11 px, radius 9). They
+count distinct finding types at medium or above, the same figure as the result view's Security line.
+
+| Pill | Colour |
+| --- | --- |
+| `N critical`, `N high` | red text `#FF8589` on red at 12%, red border at 25% |
+| `N medium` | amber text on amber at 10%, amber border at 24% |
+| `clean` (nothing at medium or above, complete analysis) | `--muted` text, `--line2` border |
+| `partial` (SkillSpector reported incomplete analysis) | `--muted` text, dashed `--line2` border |
+| `scan incomplete` (a scanner crashed, counts hidden) | amber text, dashed amber border |
+
+`partial` sits after any severity pills and replaces `clean`: a partial analysis never reads as clean. A skill
+without a completed scan shows no pill. A tooltip says the pills are static pattern
+matches, not confirmed vulnerabilities.
 
 ## Copy
 
