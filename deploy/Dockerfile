@@ -33,7 +33,13 @@ COPY --chown=app:app docs/ /home/app/inventory/docs/
 COPY --chown=app:app catalog/ /home/app/inventory/catalog/
 WORKDIR /home/app/inventory
 
-# data/ (SQLite), reports/ and cache/ live on a volume.
+# data/ (SQLite), reports/ and cache/ live on a volume. A new named volume takes its owner from the image directory
+# it mounts on, and Docker creates a missing one as root, which the non-root app cannot write (#71). So every mount
+# point in deploy/compose.yaml exists here, owned by app.
+USER root
+RUN install -d -o app -g app /home/app/inventory/data /home/app/inventory/reports /home/app/inventory/cache \
+        /home/app/.cache/uv
+USER app
 VOLUME ["/home/app/inventory/data", "/home/app/inventory/reports", "/home/app/inventory/cache"]
 EXPOSE 8080
 HEALTHCHECK CMD curl -fs http://localhost:8080/api/meta || exit 1
