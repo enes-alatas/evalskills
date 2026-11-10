@@ -308,21 +308,41 @@ def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, 
         shutil.rmtree(snap_root, ignore_errors=True)
 
 
-def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
-    digest = tree_digest(skill_dir)
-    ev = evaluator_version()
-    mode = "tier1-llm" if llm else "tier1-static"
-    if not force:
-        for prev in load_results():
-            if prev.get("status") == "completed" and (  # a failure is retried on resubmission, never reused
+def reusable(repo: str, skill_path: str, digest: str, mode: str, results: list[dict] | None = None) -> dict | None:
+    """The completed result a run of this exact content would reuse: same repo, path, tree digest, evaluator commit
+    and mode. A failure is retried on resubmission, never reused."""
+    key = (repo, skill_path, digest, evaluator_version()["commit"], mode)
+    for prev in load_results() if results is None else results:
+        if (
+            prev.get("status") == "completed"
+            and (
                 prev["source"]["repo"],
                 prev["source"]["skill_path"],
                 prev["source"]["tree_digest"],
                 prev["evaluator"]["commit"],
                 prev["mode"],
-            ) == (repo, skill_path, digest, ev["commit"], mode):
-                prev["_cached"] = True
-                return prev
+            )
+            == key
+        ):
+            return prev
+    return None
+
+
+def up_to_date(repo: str, paths: list[str], repo_dir: Path, mode: str = "tier1-static") -> set[str]:
+    """Paths under repo_dir whose current content a submission would only reuse (#83). Callers vet the paths."""
+    results = load_results()
+    return {p for p in paths if reusable(repo, p, tree_digest(repo_dir / p), mode, results)}
+
+
+def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
+    digest = tree_digest(skill_dir)
+    ev = evaluator_version()
+    mode = "tier1-llm" if llm else "tier1-static"
+    if not force:
+        prev = reusable(repo, skill_path, digest, mode)
+        if prev:
+            prev["_cached"] = True
+            return prev
     slug = f"{repo.replace('/', '__')}__{skill_path.strip('/').replace('/', '__')}"
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     out = REPORTS / slug / f"{commit[:12]}-{mode}-{stamp}"
