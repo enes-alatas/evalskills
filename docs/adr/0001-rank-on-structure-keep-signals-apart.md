@@ -37,3 +37,8 @@ How each score is computed and read is in `docs/METHODOLOGY.md`, which changes i
 **Amendment (2026-11-09, #61):** shared category tasks now come only from vendored public benchmarks, never from
 sets we author (ADR-0006). The self-authored `shared-tasks/` sets are removed. Until a public set exists for a
 category, live results are per-skill Skill Lift on each skill's own cases and are not compared across skills.
+
+**Amendment (2026-11-10, #54, #89):** Enes took #54 off hold and decided that the noise band in decision 1 no longer
+sits beside the leaderboard (#90). He found a bare "within 3 points is a tie" line confusing without the evidence
+behind it. The band is still stated in the result view and in `docs/METHODOLOGY.md` (E6), and the board's one-line
+note still says scores come from static checks only, not live runs.
