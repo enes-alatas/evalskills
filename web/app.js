@@ -9,7 +9,7 @@ const api = async (path, opts) => {
   return j;
 };
 
-const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null, openId: null, detail: null };
+const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null, openId: null, detail: null, watch: new Map(), done: null, opener: null };
 const STATUS = { queued: "Queued", running: "Running", failed: "Failed", unsupported: "Unsupported", inconclusive: "Inconclusive", unknown: "Not evaluated" };
 const short = (sha) => (sha ? String(sha).slice(0, 7) : "");
 const day = (t) => { const m = String(t || "").match(/^(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ""; };
@@ -34,7 +34,13 @@ function renderTabs() {
   const sel = more.length
     ? `<select id="more" aria-label="More categories" class="${inMore ? "on" : ""}"><option value="">More</option>${more.map((c) => `<option value="${esc(c.id)}" ${state.tab === c.id ? "selected" : ""}>${esc(c.label)} (${counts[c.id]})</option>`).join("")}</select>`
     : "";
-  $("#tabs").innerHTML = btn({ id: "all", label: "All" }) + top.map((c) => btn(c, counts[c.id])).join("") + sel;
+  const tabs = $("#tabs");
+  tabs.innerHTML = btn({ id: "all", label: "All" }) + top.map((c) => btn(c, counts[c.id])).join("") + sel;
+  // On narrow screens the tabs scroll sideways: keep the selected one in view.
+  const on = tabs.querySelector('[aria-selected="true"], select.on');
+  if (on && (on.offsetLeft < tabs.scrollLeft || on.offsetLeft + on.offsetWidth > tabs.scrollLeft + tabs.clientWidth)) {
+    tabs.scrollLeft = on.offsetLeft + on.offsetWidth - tabs.clientWidth;
+  }
 }
 
 function right(s) {
@@ -44,11 +50,27 @@ function right(s) {
   return status(s.state);
 }
 
+// Security pills: distinct finding types at medium or above (docs/METHODOLOGY.md), only for a completed scan.
+const SEV = [["critical", "sev-hi"], ["high", "sev-hi"], ["medium", "sev-med"]];
+function pills(s) {
+  const sec = s.security;
+  if (s.state !== "completed" || !sec) return "";
+  const tip = "Static scanner pattern matches, not confirmed vulnerabilities";
+  if (sec.scanner_error) return `<span class="pill sev-inc" title="A scanner crashed, so counts are incomplete">scan incomplete</span>`;
+  const on = SEV.filter(([k]) => sec[k]);
+  const partial = sec.incomplete && sec.incomplete.length
+    ? `<span class="pill sev-part" title="Partial analysis (${esc(sec.incomplete.join(", "))}), so findings may be missing">partial</span>`
+    : "";
+  // "clean" only when the analysis was complete; a partial scan never reads as clean (docs/METHODOLOGY.md).
+  if (!on.length) return partial || `<span class="pill sev-ok" title="No findings at medium or above. ${tip}">clean</span>`;
+  return on.map(([k, cls]) => `<span class="pill ${cls}" title="${sec[k]} distinct ${k} finding type${sec[k] > 1 ? "s" : ""}. ${tip}">${sec[k]} ${k}</span>`).join("") + partial;
+}
+
 function rowHtml(s, rank) {
   const sha = short(s.commit);
-  return `<button class="row" data-id="${esc(s.id)}" aria-expanded="${state.openId === s.id}">
+  return `<button class="row" data-id="${esc(s.id)}" aria-haspopup="dialog">
     <span class="rank">${rank ?? ""}</span>
-    <span class="nm">${esc(s.name)}<span class="meta">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span></span>
+    <span class="nm">${esc(s.name)}<span class="meta"><span class="src">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span>${pills(s)}</span></span>
     ${right(s)}</button>`;
 }
 
@@ -61,9 +83,7 @@ function renderBoard() {
   let rank = 0;
   $("#board").innerHTML = rows.map((s) => {
     const r = hasScore(s) ? ++rank : null;
-    const open = state.openId === s.id;
-    const inner = rowHtml(s, r);
-    return `<li data-id="${esc(s.id)}"${open ? ' class="open"' : ""}>${open ? `<div class="open-wrap">${inner}<div class="detail">${detailHtml(state.detail || s)}</div></div>` : inner}</li>`;
+    return `<li data-id="${esc(s.id)}">${rowHtml(s, r)}</li>`;
   }).join("");
   $("#empty").hidden = rows.length > 0;
 }
@@ -71,7 +91,8 @@ function renderBoard() {
 async function load() {
   state.skills = await api("/api/skills");
   renderTabs();
-  if (state.openId) await fetchDetail(state.openId, true);
+  noticeFinished();
+  if (state.openId) { await fetchDetail(state.openId, true); renderResult(); }
   renderBoard();
   const busy = state.skills.some((s) => s.state === "queued" || s.state === "running");
   clearTimeout(state.timer);
@@ -93,7 +114,8 @@ function securityLine(s, t1) {
   const top = sec.top.length
     ? `<details><summary>Findings</summary><ul class="checks">${sec.top.map((f) => `<li><span>${esc(f.title)}${f.count > 1 ? ` <span class="hint">×${f.count}</span>` : ""}</span><span class="mono">${esc(f.severity)}</span></li>`).join("")}</ul></details>`
     : "";
-  return `<div class="br"><b>Security</b><span class="f">${esc(fig)}</span>
+  const tone = sec.critical || sec.high ? "sev-hi" : sec.medium ? "sev-med" : "";
+  return `<div class="br"><b>Security</b><span class="f ${tone}">${esc(fig)}</span>
     <span class="d">${lvl.length ? "Distinct finding types at medium or above." : "No findings at medium or above."} Static pattern matches, not confirmed vulnerabilities.${partial}</span>${top}</div>`;
 }
 
@@ -103,9 +125,11 @@ function detailHtml(s) {
   let left = "";
   let rightCol = "";
   let lead = s.description ? `<p class="lead">${esc(s.description)}</p>` : "";
+  if (state.done === s.id && s.state === "completed") lead += `<p class="callout done">Evaluation complete</p>`;
+  if (state.done === s.id && s.state === "failed") lead += `<p class="callout bad">Evaluation finished without a result</p>`;
 
-  if (s.state === "queued") lead += `<p class="callout">Waiting in the evaluation queue. This view updates on its own.</p>`;
-  if (s.state === "running") lead += `<p class="callout">SkillEvaluator is running static checks now, usually under a minute. This view updates on its own.</p>`;
+  if (s.state === "queued") lead += `<p class="callout">${status("queued")} Waiting in the evaluation queue. This view updates on its own.</p>`;
+  if (s.state === "running") lead += `<p class="callout">${status("running")} SkillEvaluator is running static checks now, usually under a minute. This view updates on its own.</p>`;
   if (s.job && s.job.note && !["queued", "running"].includes(s.state)) lead += `<p class="callout">${esc(s.job.note)}</p>`;
   if (e && e.status === "failed") lead += `<p class="callout bad">The evaluation did not produce a report: ${esc(e.error || "unknown error")}. No score is shown.</p>`;
 
@@ -161,19 +185,91 @@ async function fetchDetail(id, quiet) {
   catch (err) { if (!quiet) state.detail = null; }
 }
 
-async function toggle(id) {
-  if (state.openId === id) {
-    state.openId = null; state.detail = null;
+// ---------------------------------------------------------------- result dialog
+
+const dlg = () => $("#result");
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+function renderResult() {
+  const id = state.openId;
+  if (!id) return false;
+  const s = (state.detail && state.detail.id === id ? state.detail : null) || state.skills.find((x) => x.id === id);
+  if (!s) return false;
+  const sha = short(s.commit);
+  $("#r-title").textContent = s.name;
+  $("#r-meta").innerHTML = `<span class="src">${esc(where(s))}${sha ? ` @ ${esc(sha)}` : ""}</span>${pills(s)}`;
+  $("#r-body").innerHTML = detailHtml(s);
+  return true;
+}
+
+async function openResult(id, opener) {
+  state.openId = id;
+  state.detail = null;
+  state.opener = opener || null;
+  if (!state.skills.some((x) => x.id === id)) {
+    // Unknown id (e.g. a stale /s/ link): no empty dialog.
+    state.openId = null;
     history.replaceState(null, "", "/");
-    renderBoard();
     return;
   }
-  state.openId = id; state.detail = null;
   history.replaceState(null, "", `/s/${encodeURIComponent(id)}`);
-  renderBoard();
+  renderResult();
+  const d = dlg();
+  if (!d.open) {
+    d.showModal();
+    d.scrollTop = 0;
+    requestAnimationFrame(() => d.classList.add("in"));
+  }
   await fetchDetail(id);
-  renderBoard();
+  renderResult();
 }
+
+function forget() {
+  const was = state.openId;
+  state.openId = null; state.detail = null;
+  if (state.done === was) state.done = null;
+  if (location.pathname !== "/") history.replaceState(null, "", "/");
+  return was;
+}
+
+function closeResult() {
+  const d = dlg();
+  if (!d.open) return;
+  const was = forget();
+  d.classList.remove("in");
+  const finish = () => {
+    d.close();
+    // Polling re-renders the board, so the row that opened the dialog may be gone: re-query it then.
+    const back = state.opener && state.opener.isConnected
+      ? state.opener
+      : document.querySelector(`#board button.row[data-id="${CSS.escape(was || "")}"]`);
+    back?.focus({ preventScroll: true });
+  };
+  if (reduced()) finish(); else setTimeout(finish, 180);
+}
+
+// Submitted skills are watched until their evaluation ends. The open dialog shows the result as soon as it lands;
+// if the dialog was closed meanwhile, a notice offers to open it.
+function noticeFinished() {
+  for (const [id, prev] of state.watch) {
+    const s = state.skills.find((x) => x.id === id);
+    if (!s || s.state === prev) continue;
+    if (s.state === "queued" || s.state === "running") { state.watch.set(id, s.state); continue; }
+    state.watch.delete(id);
+    if (state.openId === id) { state.done = id; continue; }
+    const what = s.state === "completed" && hasScore(s) ? `scored ${s.structural.score.toFixed(1)}` : (STATUS[s.state] || s.state).toLowerCase();
+    toast(`${s.name} ${what}`, id);
+  }
+}
+
+function toast(text, id) {
+  const t = $("#toast");
+  t.innerHTML = `<span>${esc(text)}</span><button type="button" class="link" data-open="${esc(id)}">View</button><button type="button" class="link" data-dismiss aria-label="Dismiss">Close</button>`;
+  t.hidden = false;
+  requestAnimationFrame(() => t.classList.add("in"));
+}
+
+function hideToast() { const t = $("#toast"); t.classList.remove("in"); setTimeout(() => (t.hidden = true), reduced() ? 0 : 180); }
 
 // ---------------------------------------------------------------- add a skill, in place
 
@@ -224,11 +320,10 @@ async function submitSkills() {
     const res = await api("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: state.found.repo, paths, category: $("#cat").value }) });
     showAdd(false);
     state.tab = "all"; state.q = ""; $("#q").value = "";
+    res.submitted.filter((x) => x.skill_id).forEach((x) => state.watch.set(x.skill_id, "queued"));
     const first = res.submitted.find((x) => x.skill_id);
-    if (first) { state.openId = first.skill_id; history.replaceState(null, "", `/s/${encodeURIComponent(first.skill_id)}`); }
     await load();
-    const li = first && document.querySelector(`#board li[data-id="${CSS.escape(first.skill_id)}"]`);
-    if (li) li.scrollIntoView({ block: "center" });
+    if (first) await openResult(first.skill_id, $("#add-btn"));
   } catch (err) {
     addError(err.message);
   } finally { btn.disabled = false; }
@@ -247,7 +342,18 @@ async function init() {
   $("#q").addEventListener("input", (e) => { state.q = e.target.value; renderBoard(); });
   $("#tabs").addEventListener("change", (e) => { if (e.target.id === "more") { state.tab = e.target.value || "all"; renderTabs(); renderBoard(); } });
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) { state.tab = b.dataset.tab; renderTabs(); renderBoard(); } });
-  $("#board").addEventListener("click", (e) => { const b = e.target.closest("button.row"); if (b) toggle(b.dataset.id); });
+  $("#board").addEventListener("click", (e) => { const b = e.target.closest("button.row"); if (b) openResult(b.dataset.id, b); });
+  $("#r-close").addEventListener("click", closeResult);
+  dlg().addEventListener("cancel", (e) => { e.preventDefault(); closeResult(); });
+  dlg().addEventListener("click", (e) => { if (e.target === dlg()) closeResult(); });
+  // A browser can close the modal itself (e.g. a repeated Esc) without our cancel handler: keep state in step.
+  dlg().addEventListener("close", () => { dlg().classList.remove("in"); if (state.openId) forget(); });
+  $("#toast").addEventListener("click", (e) => {
+    const o = e.target.closest("[data-open]");
+    if (o) { hideToast(); state.done = o.dataset.open; openResult(o.dataset.open); }
+    else if (e.target.closest("[data-dismiss]")) hideToast();
+  });
+  if (state.meta.source_repo_url) { $("#gh").href = state.meta.source_repo_url; $("#gh").hidden = false; }
   $("#add-btn").addEventListener("click", () => showAdd(true));
   $("#add-cancel").addEventListener("click", () => showAdd(false));
   $("#add").addEventListener("submit", lookup);
@@ -255,8 +361,7 @@ async function init() {
   $("#found-list").addEventListener("change", updateEvaluateLabel);
   $("#submit-skills").addEventListener("click", submitSkills);
   const m = location.pathname.match(/^\/s\/(.+)$/);
-  if (m) state.openId = decodeURIComponent(m[1]);
   await load();
-  if (state.openId) document.querySelector(`#board li[data-id="${CSS.escape(state.openId)}"]`)?.scrollIntoView({ block: "center" });
+  if (m) await openResult(decodeURIComponent(m[1]));
 }
 init().catch((e) => { document.body.insertAdjacentHTML("beforeend", `<p class="err">${esc(e.message)}</p>`); });
