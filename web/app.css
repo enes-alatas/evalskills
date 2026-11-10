@@ -23,7 +23,7 @@ a:hover { text-decoration-color: var(--fg2); }
 .center { text-align: center; padding: 32px 0; }
 code, .mono { font-family: var(--mono); font-size: 12px; }
 
-.col { max-width: 760px; margin: 0 auto; padding: 32px 20px 96px; }
+.col { max-width: 760px; margin: 0 auto; padding: 32px max(20px, env(safe-area-inset-right)) 96px max(20px, env(safe-area-inset-left)); }
 
 /* Top bar and header */
 .top { display: flex; align-items: center; justify-content: space-between; height: 40px; }
@@ -131,20 +131,24 @@ button.why:hover { text-decoration-color: var(--fg2); }
 @media (prefers-reduced-motion: reduce) { .st-running::before { animation: none; } }
 
 /* Result dialog */
-.sheet { width: min(760px, calc(100vw - 48px)); max-width: none; max-height: min(86vh, 900px); margin: auto; padding: 0; border: 1px solid var(--line2); border-radius: 12px; background: var(--card); color: var(--fg); overflow: auto; overscroll-behavior: contain;
+/* viewport-fit=cover is page-wide: keep the dialog, toast and column clear of side insets in landscape on notched phones. */
+.sheet { width: min(760px, calc(100vw - 48px - env(safe-area-inset-left) - env(safe-area-inset-right))); max-width: none; max-height: min(86vh, 900px); max-height: min(86dvh, 900px); margin: auto; padding: 0; border: 1px solid var(--line2); border-radius: 12px; background: var(--card); color: var(--fg); overflow: hidden;
   opacity: 0; transform: translateY(8px) scale(.985); transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .sheet.in { opacity: 1; transform: none; }
+/* The header never scrolls away: only the body scrolls, so the close button is always reachable (#79). */
+.sheet[open] { display: flex; flex-direction: column; }
 .sheet::backdrop { background: #000; opacity: 0; transition: opacity 180ms var(--ease); }
 .sheet.in::backdrop { opacity: .6; }
-.sheet-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+.sheet-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px 24px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
 .sheet-title h2 { margin: 0; font-size: 18px; line-height: 26px; font-weight: 500; overflow-wrap: anywhere; }
 .x { flex: none; width: 36px; height: 36px; padding: 0; margin: -4px -10px 0 0; display: inline-flex; align-items: center; justify-content: center; background: none; color: var(--fg2); }
 .x:hover { background: var(--raised); color: var(--fg); }
-.sheet .detail { padding: 4px 24px 24px; margin-left: 0; }
+.sheet .detail { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; align-content: start; grid-auto-rows: max-content; padding: 4px 24px 24px; margin-left: 0; }
+.br details { grid-column: 1 / -1; }
 body:has(.sheet[open]) { overflow: hidden; }
 
 /* Completion notice */
-.toast { position: fixed; left: 50%; bottom: 24px; z-index: 10; display: flex; align-items: center; gap: 4px 12px; max-width: calc(100vw - 32px); padding: 10px 10px 10px 16px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raised); font-size: 14px;
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); z-index: 10; display: flex; align-items: center; gap: 4px 12px; max-width: calc(100vw - 32px - env(safe-area-inset-left) - env(safe-area-inset-right)); padding: 10px 10px 10px 16px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raised); font-size: 14px;
   opacity: 0; transform: translate(-50%, 8px); transition: opacity 180ms var(--ease), transform 180ms var(--ease); }
 .toast.in { opacity: 1; transform: translate(-50%, 0); }
 .toast span { overflow-wrap: anywhere; }
@@ -177,15 +181,16 @@ summary:hover { color: var(--fg2); }
 
 @media (max-width: 640px) {
   .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .col { padding: 16px 16px 64px; }
+  .col { padding: 16px max(16px, env(safe-area-inset-right)) 64px max(16px, env(safe-area-inset-left)); }
   .head { padding: 32px 0 32px; }
   h1 { font-size: 26px; line-height: 32px; }
   .row { grid-template-columns: 24px 1fr auto; }
   .detail { grid-template-columns: 1fr; margin-left: 0; gap: 8px; }
-  .sheet { width: 100vw; max-height: 92vh; margin: auto 0 0; border-radius: 12px 12px 0 0; border-bottom: 0; transform: translateY(24px); }
+  .sheet { width: 100vw; max-height: 85vh; max-height: 85dvh; margin: auto 0 0; border-radius: 12px 12px 0 0; border-bottom: 0; transform: translateY(24px); }
   .sheet.in { transform: none; }
   .sheet-head { padding: 16px 16px 12px; }
-  .sheet .detail { padding: 4px 16px 32px; }
-  .toast { bottom: 16px; }
+  .sheet .detail { padding: 4px 16px calc(32px + env(safe-area-inset-bottom)); }
+  .x { width: 44px; height: 44px; margin: -8px -12px 0 0; }
+  .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
   .kv { grid-template-columns: 104px 1fr; }
 }
