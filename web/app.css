@@ -42,16 +42,16 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .foot a { color: var(--fg2); }
 
 /* Top bar and header */
-.top { display: flex; align-items: center; justify-content: space-between; height: 40px; }
-.logo { font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.01em; color: var(--fg); }
-.gh { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; margin-right: -9px; border-radius: 8px; color: var(--fg2); transition: color 150ms var(--ease), background-color 150ms var(--ease); }
+.gh { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; color: var(--fg2); transition: color 150ms var(--ease), background-color 150ms var(--ease); }
 .gh:hover { color: var(--fg); background: var(--raised); }
 /* Header (#89): a compact split row, text left and the one action right, instead of a centred stack */
-.head { padding: 32px 0 24px; }
+.head { padding: 4px 0 20px; }
 .head-row { display: flex; align-items: center; justify-content: space-between; gap: 16px 24px; }
-h1 { margin: 0 0 4px; font-size: 26px; line-height: 32px; font-weight: 500; letter-spacing: -0.01em; }
-.lede { margin: 0; color: var(--fg2); }
-#add-btn { flex: none; height: 40px; }
+h1 { margin: 0; font-size: 20px; line-height: 28px; font-weight: 500; letter-spacing: -0.01em; }
+.lede { margin: 0; font-size: 13px; line-height: 20px; color: var(--muted); }
+.brand { min-width: 0; }
+.acts { display: flex; align-items: center; gap: 8px; flex: none; }
+#add-btn { flex: none; height: 36px; }
 
 /* Buttons and inputs */
 button { font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; border: 0; border-radius: 8px; height: 36px; padding: 0 16px; color: var(--fg); background: var(--raised); transition: background-color 150ms var(--ease), opacity 150ms var(--ease); }
@@ -109,28 +109,31 @@ select { background: var(--card); }
 .tabs select.on { background-color: var(--raised); color: var(--fg); }
 .tabs select option { background: var(--card); color: var(--fg); }
 .tabs .count { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-left: 6px; }
-.search { position: relative; margin: 12px 0 8px; color: var(--muted); }
+/* Search and the one-line note share a row under the tabs (#97) */
+.filters { display: flex; align-items: center; gap: 8px 16px; margin: 12px 0; }
+.filters .note { margin: 0; flex: none; }
+.note.why-panel { margin: -4px 0 12px; }
+.search { position: relative; flex: 1; min-width: 0; color: var(--muted); }
 .search svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; }
-#q { width: 100%; height: 40px; padding-left: 38px; border-radius: 10px; background: var(--card); transition: border-color 150ms var(--ease); }
+#q { width: 100%; height: 36px; padding-left: 38px; border-radius: 10px; background: var(--card); transition: border-color 150ms var(--ease); }
 #q:focus-visible { outline: none; border-color: #eef0f566; }
 .note { margin: 8px 0 12px; font-size: 13px; line-height: 20px; color: var(--muted); }
 .note a { color: var(--fg2); }
 .note p { margin: 0; }
 .note p + p { margin-top: 4px; }
-.note #why { margin-top: 4px; }
 button.why { font: inherit; height: auto; padding: 0; border-radius: 0; background: none; color: var(--fg2); text-decoration: underline; text-decoration-color: var(--line2); text-underline-offset: 3px; }
 button.why:hover { text-decoration-color: var(--fg2); }
 
 /* Board */
 .board { list-style: none; margin: 0; padding: 0; }
 .board > li { border-top: 1px solid var(--line); }
-.row { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 0 8px; width: 100%; min-height: 64px; padding: 10px 0; background: none; border-radius: 0; height: auto; text-align: left; font-weight: 400; color: var(--fg); }
+.row { display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 0 8px; width: 100%; min-height: 52px; padding: 8px 0; background: none; border-radius: 0; height: auto; text-align: left; font-weight: 400; color: var(--fg); }
 .row:hover { background: none; }
 .row:hover .nm { color: #ffffff; }
 .row:hover .meta { color: var(--fg2); }
 .rank { font-family: var(--mono); font-size: 13px; color: var(--muted); }
 .nm { font-size: 15px; font-weight: 500; transition: color 150ms var(--ease); }
-.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 4px; font-family: var(--mono); font-size: 12px; line-height: 16px; color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 2px; font-family: var(--mono); font-size: 12px; line-height: 16px; color: var(--muted); }
 .meta .src { overflow-wrap: anywhere; margin-right: 4px; }
 .meta .where { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 4px; color: var(--fg2); }
 
@@ -221,10 +224,16 @@ summary:hover { color: var(--fg2); }
   .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   .col { padding: 16px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
   .scroll { max-height: calc(100vh - 64px); max-height: calc(100dvh - 64px); margin: 0 -4px; padding: 0 4px; }
-  .head { padding: 24px 0 20px; }
-  .head-row { flex-direction: column; align-items: flex-start; }
-  .lede { font-size: 14px; }
-  h1 { font-size: 24px; line-height: 30px; }
+  .head { padding: 0 0 16px; }
+  /* Title and actions share the first row; the subtitle runs full width under them. */
+  .head-row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title acts" "lede lede"; align-items: center; gap: 4px 12px; }
+  .brand { display: contents; }
+  .brand h1 { grid-area: title; }
+  .brand .lede { grid-area: lede; }
+  .acts { grid-area: acts; }
+  /* Pills keep their title text; the visible "Security:" label goes so they fit on the repo line. */
+  .sec-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .filters { flex-direction: column; align-items: stretch; }
   .foot { flex-direction: column; }
   .row { grid-template-columns: 24px 1fr auto; }
   .detail { grid-template-columns: 1fr; margin-left: 0; gap: 8px; }

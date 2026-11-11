@@ -84,13 +84,18 @@ There are two families and two weights (400 and 500). Both fonts are OFL, so shi
 See `ref-layout.png`.
 
 - One centered column, about 720 px wide, with the same structure on mobile and desktop.
-- From top to bottom: a top bar with the wordmark (Geist 20/28, 500, `--fg`) on the left and the GitHub mark on
-  the right; a header row; the category tabs; search on its own full-width row; the score note and security key;
-  the leaderboard; a footer.
-- The header row is a compact split (#89): the title "Evaluate agent skills" (26/32, 500) over the subtitle "Results
-  from NVIDIA SkillEvaluator, pinned to the commit tested", left-aligned, with **Check a skill** (40 px, primary) on
-  the right, centred against them. On mobile they stack in reading order, left-aligned. A centred stack with a big
-  button was the template default (unslop) and took more than half of the first screen.
+- From top to bottom: a header row; the category tabs; search and the one-line score note on one row; the
+  leaderboard; a footer.
+- The header row (#97, replacing #89's top bar plus title): the wordmark "evalskills" as the h1 (Geist 20/28, 500)
+  over the subtitle "Agent skills scored by NVIDIA SkillEvaluator" (13/20, `--muted`), left-aligned. The GitHub mark
+  and **Check a skill** (36 px, primary) sit on the right. On mobile the wordmark and actions share the first row and
+  the subtitle runs full width under them. Enes found the first screen showed too few skills, so the header is kept
+  to about two lines.
+- Search takes the rest of its row, and "Static checks only, not live runs. How it works" sits to its right. On
+  mobile the note goes under the search. "How it works" opens the rubric summary, the severity key and the scanner
+  caveat below that row.
+- Rows are at least 52 px. On mobile the visible "Security:" label is dropped so the pills fit on the repo line;
+  each pill keeps its title text, and the label stays for screen readers.
 - The page scrolls to its end. The leaderboard sits in its own container, at most the viewport height minus 96 px
   (64 px on mobile), its last row closed by a hairline. Its scroll hands over to the page at either end, so the footer is
   always reachable (#89). On desktop the board starts in the upper half of the first screen.
