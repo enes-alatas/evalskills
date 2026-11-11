@@ -604,15 +604,38 @@ class H(BaseHTTPRequestHandler):
 
 
 def bootstrap():
-    """First start in a fresh deployment: seed results + sanitized public reports from the shipped catalog."""
+    """Seed results + sanitized public reports from the shipped catalog. A fresh deployment gets a copy; an existing
+    one gets the catalog records and reports it doesn't have yet, so a catalog update (a re-scan, say, #110) reaches
+    it without touching its own submissions."""
     import shutil
     import tarfile
 
-    if ev.RESULTS != ev.SEED_RESULTS and not ev.RESULTS.exists() and ev.SEED_RESULTS.exists():
+    if ev.RESULTS != ev.SEED_RESULTS and ev.SEED_RESULTS.exists():
         ev.RESULTS.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(ev.SEED_RESULTS, ev.RESULTS)
+        if not ev.RESULTS.exists():
+            shutil.copy(ev.SEED_RESULTS, ev.RESULTS)
+        else:
+            seed = [line for line in ev.SEED_RESULTS.read_text().splitlines() if line.strip()]
+            seed_ids = {json.loads(line)["id"] for line in seed}
+            have, newest = set(), {}
+            for r in ev.load_results():
+                have.add(r["id"])
+                key = (r["source"]["repo"], r["source"]["skill_path"])
+                if key not in newest or r["started_at"] > newest[key]["started_at"]:
+                    newest[key] = r
+            # A catalog record is added only where the catalog owns what the board shows: the skill is new here, or
+            # its newest record came from the catalog. It never hides a newer live submission (#111 review).
+            new = []
+            for line in seed:
+                r = json.loads(line)
+                prev = newest.get((r["source"]["repo"], r["source"]["skill_path"]))
+                if r["id"] not in have and (prev is None or prev["id"] in seed_ids):
+                    new.append(line)
+            if new:
+                with ev.RESULTS.open("a") as f:
+                    f.write("".join(line + "\n" for line in new))
     bundle = ROOT / "catalog" / "public-reports.tar.gz"
-    if bundle.exists() and not any(ev.REPORTS.glob("*/*/report.public.json")):
+    if bundle.exists():
         with tarfile.open(bundle) as t:
             members = [
                 m
@@ -621,6 +644,7 @@ def bootstrap():
                 and m.name.endswith("/report.public.json")
                 and not m.name.startswith("/")
                 and ".." not in m.name.split("/")
+                and not (ev.REPORTS / m.name).exists()
             ]
             try:
                 t.extractall(ev.REPORTS, members=members, filter="data")

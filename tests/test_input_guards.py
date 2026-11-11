@@ -176,3 +176,46 @@ def test_bootstrap_extracts_only_regular_public_reports(tmp_path, monkeypatch):
     server.bootstrap()
     got = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*") if p.is_file() or p.is_symlink())
     assert got == ["catalog/public-reports.tar.gz", "reports/good/run/report.public.json"]
+
+
+def _rec(rid: str, path: str, stamp: str) -> str:
+    return json.dumps({"id": rid, "source": {"repo": "o/r", "skill_path": path}, "started_at": stamp}) + "\n"
+
+
+def test_bootstrap_adds_new_catalog_records_and_keeps_submissions(tmp_path, monkeypatch):
+    """An existing deployment gets catalog records and reports it lacks (#110), but only where the board shows a
+    catalog record or nothing: a newer live submission keeps showing (#111 review). Its own lines stay as they are."""
+    seed, results = tmp_path / "catalog" / "results.jsonl", tmp_path / "data" / "results.jsonl"
+    seed.parent.mkdir()
+    results.parent.mkdir()
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    monkeypatch.setattr(ev, "REPORTS", tmp_path / "reports")
+    monkeypatch.setattr(ev, "SEED_RESULTS", seed)
+    monkeypatch.setattr(ev, "RESULTS", results)
+    seed.write_text(
+        _rec("a-old", "a", "20261107T000000Z")
+        + _rec("b-old", "b", "20261107T000000Z")
+        + _rec("a-rescan", "a", "20261111T180000Z")
+        + _rec("b-rescan", "b", "20261111T180000Z")
+        + _rec("c-new", "c", "20261111T180000Z")
+    )
+    deployed = (
+        _rec("a-old", "a", "20261107T000000Z")
+        + _rec("b-old", "b", "20261107T000000Z")
+        + _rec("b-submitted", "b", "20261111T120000Z")  # a live run of b at a newer commit, before the re-scan
+    )
+    results.write_text(deployed)
+    (tmp_path / "reports" / "kept" / "run").mkdir(parents=True)
+    (tmp_path / "reports" / "kept" / "run" / "report.public.json").write_text('{"local": true}')
+    with tarfile.open(tmp_path / "catalog" / "public-reports.tar.gz", "w:gz") as t:
+        for name, data in (("kept/run/report.public.json", b'{"local": false}'), ("new/run/report.public.json", b"{}")):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+    server.bootstrap()
+    server.bootstrap()  # a second start adds nothing
+    assert results.read_text() == deployed + _rec("a-rescan", "a", "20261111T180000Z") + _rec(
+        "c-new", "c", "20261111T180000Z"
+    )
+    assert (tmp_path / "reports" / "kept" / "run" / "report.public.json").read_text() == '{"local": true}'
+    assert (tmp_path / "reports" / "new" / "run" / "report.public.json").is_file()
