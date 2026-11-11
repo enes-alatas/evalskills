@@ -30,7 +30,12 @@ TIER1 = re.compile(r"ghcr\.io/nvidia/skillevaluator-tier1@sha256:[0-9a-f]{64}")
 
 
 def test_one_tier1_image_digest_everywhere():
-    files = [DEPLOY / "compose.yaml", DEPLOY / "scanner" / "Dockerfile", DEPLOY.parent / ".github/workflows/skills.yml"]
+    files = [
+        DEPLOY / "compose.yaml",
+        DEPLOY / "scanner" / "Dockerfile",
+        DEPLOY.parent / ".github/workflows/skills.yml",
+        DEPLOY.parent / ".github/workflows/engine-parity.yml",
+    ]
     found = {f.name: set(TIER1.findall(f.read_text())) for f in files}
     assert all(len(v) == 1 for v in found.values()), found
     assert len(set().union(*found.values())) == 1, found
