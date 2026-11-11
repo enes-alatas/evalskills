@@ -1,9 +1,12 @@
-# Phase 1 (static Tier 1 only) on a shared VPS. Untested: no Docker on the dev workstation.
+# Phase 1 (static Tier 1 only) on a shared VPS. CI builds both images and scans one skill through them (deploy-smoke).
 # Usage: cp env.example .env && docker compose -f deploy/compose.yaml up -d --build
 # Caddy runs on the host as a system daemon and proxies to the loopback port published below:
 #   skills.example.com {
 #     reverse_proxy 127.0.0.1:8088
 #   }
+# The Tier 1 image, pinned by digest. It must match deploy/scanner/Dockerfile and .github/workflows/skills.yml.
+x-tier1-image: &tier1_image ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+
 services:
   evalskills:
     build: { context: .., dockerfile: deploy/Dockerfile }
@@ -11,9 +14,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      UV_CACHE_DIR: /home/app/.cache/uv      # persistent volume below; SkillSpector runs via `uv tool run`
-      UV_FROZEN: "1"                         # never re-resolve dependencies at runtime
       TMPDIR: /tmp
+      # Static scans go to the scanner sidecar below (#65). The app runs no evaluator and records this image digest.
+      SCANNER_IN: /home/app/inventory/scan-in
+      SCANNER_OUT: /home/app/inventory/scan-out
+      SCANNER_IMAGE: *tier1_image
       RESULTS_PATH: /home/app/inventory/data/results.jsonl   # writable volume, seeded from catalog/ on first start
       # Caddy's requests reach the container from this network's gateway (Docker's port proxy / NAT), so that is the
       # one address whose X-Forwarded-For the app believes. Set here so it always matches the network below.
@@ -33,9 +38,40 @@ services:
       - data:/home/app/inventory/data
       - reports:/home/app/inventory/reports
       - cache:/home/app/inventory/cache
-      - uvcache:/home/app/.cache/uv
+      - scan-in:/home/app/inventory/scan-in
+      - scan-out:/home/app/inventory/scan-out
     ports: ["127.0.0.1:${EVALSKILLS_PORT:-8088}:8080"]   # loopback only: reachable through the host's Caddy alone
     networks: [evalskills]
+    logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+  # The static scanner (#65): SkillEvaluator's Tier 1 image, pinned by digest, with no network, no secrets, no Docker
+  # socket and no access to the app's volumes. It scans one job and exits; `restart: always` starts a fresh container
+  # for the next, so nothing a crafted skill does survives a scan.
+  scanner:
+    build:
+      context: ..
+      dockerfile: deploy/scanner/Dockerfile
+      args: { TIER1_IMAGE: *tier1_image }
+    container_name: evalskills-scanner
+    depends_on: [evalskills]                 # the app creates the shared volumes, owned by uid 10001 (#71)
+    restart: always
+    network_mode: none
+    environment:
+      TIER1_TIMEOUT: "600"
+      TMPDIR: /tmp
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=1g,mode=1777"]
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 1
+    pids_limit: 256
+    ulimits: { nofile: 4096 }
+    volumes:
+      - scan-in:/scan/in:ro                  # the job: one skill snapshot, read-only
+      - scan-out:/scan/out                   # the report files go back here
     logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
 
 networks:
@@ -45,7 +81,7 @@ networks:
         - subnet: "${EVALSKILLS_SUBNET:-172.30.250.0/24}"
           gateway: "${EVALSKILLS_GATEWAY:-172.30.250.1}"
 
-volumes: { data: {}, reports: {}, cache: {}, uvcache: {} }
+volumes: { data: {}, reports: {}, cache: {}, scan-in: {}, scan-out: {} }
 
 # Phase 2 (live Tier 3) is deliberately NOT here: untrusted code never runs in this stack or on the main Docker
 # daemon. Trials run under gVisor on the separate docker-evals daemon (docs/adr/0003-gvisor-eval-daemon.md,

@@ -1,36 +1,14 @@
-# evalskills: app server + SkillEvaluator in one image.
+# evalskills: the app server (zone A). It runs no evaluator: static scans go to the scanner sidecar (#65,
+# deploy/scanner/). git clones skills; curl serves the healthcheck.
 # Build:  docker build -f deploy/Dockerfile -t evalskills .
 FROM python:3.13-slim
 
-ARG SKILLEVALUATOR_REF=d136a597c54784ad8a0ce28542c208602b397a5c
-ARG UV_VERSION=0.13.7
-
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "uv==${UV_VERSION}" \
     && useradd --create-home --uid 10001 app
 
 USER app
 WORKDIR /home/app
-ENV PATH=/home/app/.local/bin:$PATH \
-    SKILLEVALUATOR_DIR=/home/app/SkillEvaluator \
-    UV_PYTHON_PREFERENCE=only-system
-
-# Pinned evaluator, with all extras (tier1 scanners, tier2, tier3/Harbor) installed into its own venv.
-RUN git clone https://github.com/NVIDIA/SkillEvaluator.git "$SKILLEVALUATOR_DIR" \
-    && git -C "$SKILLEVALUATOR_DIR" checkout -q "$SKILLEVALUATOR_REF" \
-    && cd "$SKILLEVALUATOR_DIR" && uv sync --python 3.13 --extra all --frozen \
-    # Warm the pinned SkillSpector + Gitleaks downloads so the first evaluation does not fetch them.
-    && uv run --python 3.13 --extra security skillevaluator tier1 \
-         src/skillevaluator/tier3/reference_skills/text-analyzer --no-llm -r json -o /tmp/warm || true \
-    && rm -rf /tmp/warm \
-    # Fail the build if the scanners were not provisioned (they must not be fetched at runtime).
-    && ls /home/app/.local/share/skillevaluator/runtimes/skillspector /home/app/.local/share/skillevaluator/runtimes/gitleaks
-
-# At runtime the evaluator's venv is final and the root filesystem is read-only: `uv run` must use the venv as built,
-# never re-lock or re-sync it (that writes into $SKILLEVALUATOR_DIR, and fails there) (#75).
-ENV UV_NO_SYNC=1 \
-    UV_FROZEN=1
 COPY --chown=app:app pipeline/ /home/app/inventory/pipeline/
 COPY --chown=app:app web/ /home/app/inventory/web/
 COPY --chown=app:app docs/ /home/app/inventory/docs/
@@ -42,7 +20,7 @@ WORKDIR /home/app/inventory
 # point in deploy/compose.yaml exists here, owned by app.
 USER root
 RUN install -d -o app -g app /home/app/inventory/data /home/app/inventory/reports /home/app/inventory/cache \
-        /home/app/.cache/uv
+        /home/app/inventory/scan-in /home/app/inventory/scan-out
 USER app
 VOLUME ["/home/app/inventory/data", "/home/app/inventory/reports", "/home/app/inventory/cache"]
 EXPOSE 8080

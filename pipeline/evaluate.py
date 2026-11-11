@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,6 +30,18 @@ SEED_RESULTS = ROOT / "catalog" / "results.jsonl"
 RESULTS = Path(os.environ.get("RESULTS_PATH", str(SEED_RESULTS)))
 UV = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
 TIER1_TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "600"))
+# Deployed (#65): the app runs no evaluator. It hands each skill to the scanner sidecar through two volumes
+# (deploy/scanner/scanner.py describes the protocol). Unset, as on a dev machine, Tier 1 runs as a local subprocess.
+SCANNER_IN = os.environ.get("SCANNER_IN")
+SCANNER_OUT = os.environ.get("SCANNER_OUT")
+SCANNER_IMAGE = os.environ.get("SCANNER_IMAGE")
+SCANNER_PICKUP_TIMEOUT = float(os.environ.get("SCANNER_PICKUP_TIMEOUT", "120"))
+SCANNER_POLL_S = float(os.environ.get("SCANNER_POLL_S", "1"))
+
+
+class ScannerUnavailable(RuntimeError):
+    """No scanner claimed the job in time. The worker puts the job back in the queue; it is never a failed score."""
+
 
 # Only these variables reach the evaluator subprocess; nothing else from our env leaks.
 ENV_ALLOW = {
@@ -155,8 +168,24 @@ def prune_cache(max_age_s: float, max_repos: int, keep: set[str]) -> list[str]:
     return removed
 
 
-@functools.lru_cache(maxsize=1)
 def evaluator_version() -> dict:
+    """The evaluator a run uses. With the sidecar, it is the scanner image (by digest) and the version it reports."""
+    if not SCANNER_IN:
+        return _local_evaluator_version()
+    try:
+        ident = json.loads((Path(SCANNER_OUT) / ".identity.json").read_text())
+    except (OSError, ValueError):
+        ident = {}
+    return {"version": ident.get("version"), "commit": None, "image": SCANNER_IMAGE or ident.get("image")}
+
+
+def evaluator_key(ev: dict) -> str | None:
+    """What makes two runs' evaluators the same: the image digest when there is one, else the source commit."""
+    return ev.get("image") or ev.get("commit")
+
+
+@functools.lru_cache(maxsize=1)
+def _local_evaluator_version() -> dict:
     ver = sh(
         [UV, "run", "-q", "--python", "3.13", "skillevaluator", "--version"], cwd=EVALUATOR_DIR, env=git_env()
     ).split()[-1]
@@ -259,6 +288,8 @@ def scanner_crash(rep_path: Path) -> str | None:
 
 
 def run_tier1(skill_dir: Path, out: Path, llm: bool) -> tuple[int, float, str]:
+    if SCANNER_IN and not llm:
+        return run_tier1_sidecar(skill_dir, out)
     env = git_env()
     if llm:
         env.update({k: v for k, v in os.environ.items() if k in PROVIDER_VARS})
@@ -288,6 +319,123 @@ def run_tier1(skill_dir: Path, out: Path, llm: bool) -> tuple[int, float, str]:
     return code, round(time.monotonic() - t0, 1), log
 
 
+# The report files the app uses, read by name; nothing else the scanner writes is copied (#65).
+REPORT_FILES = ("skillevaluator-tier1.json", "skillevaluator-tier1.html", "skillevaluator-tier1.md")
+MAX_REPORT_BYTES = 64 * 1024 * 1024
+_DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_FILE_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+
+
+def open_dir(name: str | Path, dir_fd: int | None = None) -> int | None:
+    """A directory fd that is never reached through a link, or None."""
+    try:
+        return os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+    except OSError:
+        return None
+
+
+def read_regular(dir_fd: int, name: str, limit: int | None = None) -> bytes | None:
+    """The bytes of dir_fd/name if it is a regular file (checked on the open fd, so a link or a swap can't redirect
+    it) of at most limit bytes, else None."""
+    limit = MAX_REPORT_BYTES if limit is None else limit
+    try:
+        fd = os.open(name, _FILE_FLAGS, dir_fd=dir_fd)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > limit:
+            return None
+        with os.fdopen(fd, "rb", closefd=False) as f:
+            data = f.read(limit + 1)
+        return data if len(data) <= limit else None
+    finally:
+        os.close(fd)
+
+
+def copy_report(job_fd: int, out: Path) -> None:
+    """Copy the scanner's report files into out. Every path component is opened relative to the job's directory fd
+    with O_NOFOLLOW, so nothing in the scanner's outbox can make the app read one of its own files."""
+    rep = open_dir("report", dir_fd=job_fd)
+    if rep is None:
+        return
+    try:
+        for name in REPORT_FILES:
+            data = read_regular(rep, name)
+            if data is not None:
+                (out / name).write_bytes(data)
+    finally:
+        os.close(rep)
+
+
+def read_job(outbox: Path, job: str, out: Path, waited: float) -> tuple[int, float, str]:
+    """The finished job's exit code, duration and log, with its report files copied into out."""
+    box = open_dir(outbox)
+    job_fd = open_dir(job, dir_fd=box) if box is not None else None
+    try:
+        raw = read_regular(job_fd, "result.json", 1024 * 1024) if job_fd is not None else None
+        try:
+            result = json.loads(raw) if raw else None
+            code, secs, log = int(result["exit_code"]), float(result["duration_s"]), str(result.get("log", ""))
+        except (TypeError, KeyError, ValueError, AttributeError):
+            return -1, waited, "scanner error: no readable result"
+        copy_report(job_fd, out)
+        return code, secs, log
+    finally:
+        for fd in (job_fd, box):
+            if fd is not None:
+                os.close(fd)
+
+
+def sweep_exchange(max_age_s: float) -> list[str]:
+    """Remove inbox and outbox entries older than max_age_s: jobs left behind by a scan that timed out or an app
+    restart mid-scan. The scanner's .identity.json is kept."""
+    removed, now = [], time.time()
+    for root in (SCANNER_IN, SCANNER_OUT):
+        if not root or not Path(root).is_dir():
+            continue
+        for entry in Path(root).iterdir():
+            if entry.name == ".identity.json":
+                continue
+            try:
+                if now - entry.lstat().st_mtime < max_age_s:
+                    continue
+                if entry.is_dir() and not entry.is_symlink():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                removed.append(entry.name)
+            except OSError:
+                continue
+    return removed
+
+
+def run_tier1_sidecar(skill_dir: Path, out: Path) -> tuple[int, float, str]:
+    """Hand skill_dir to the scanner sidecar and copy its report files into out. Raises ScannerUnavailable if no
+    scanner claims the job within SCANNER_PICKUP_TIMEOUT; a claimed job that never finishes is a timeout (-9)."""
+    inbox, outbox = Path(SCANNER_IN), Path(SCANNER_OUT)
+    job = f"{dt.datetime.now(dt.UTC).strftime('%Y%m%dT%H%M%S')}-{os.urandom(6).hex()}"
+    staging = inbox / f".{job}"
+    shutil.copytree(skill_dir, staging / "skill" / skill_dir.name, symlinks=True)
+    (staging / "job.json").write_text(json.dumps({"name": skill_dir.name}))
+    os.rename(staging, inbox / job)  # the scanner sees the job only once it is complete
+    claimed, done = outbox / job, outbox / job / "done"
+    t0 = time.monotonic()
+    try:
+        while not done.exists():
+            waited = time.monotonic() - t0
+            if not claimed.exists() and waited > SCANNER_PICKUP_TIMEOUT:
+                raise ScannerUnavailable("No scanner picked up the job; it stays queued.")
+            if waited > SCANNER_PICKUP_TIMEOUT + TIER1_TIMEOUT + 60:
+                return -9, round(waited, 1), "TIMEOUT: scan timed out"
+            time.sleep(SCANNER_POLL_S)
+        return read_job(outbox, job, out, round(time.monotonic() - t0, 1))
+    finally:
+        shutil.rmtree(inbox / job, ignore_errors=True)
+        if done.exists() or not claimed.exists():
+            shutil.rmtree(claimed, ignore_errors=True)
+
+
 def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, force: bool = False) -> dict:
     snap_root = Path(tempfile.mkdtemp(prefix="skill-snap-"))
     try:
@@ -311,7 +459,7 @@ def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, 
 def reusable(repo: str, skill_path: str, digest: str, mode: str, results: list[dict] | None = None) -> dict | None:
     """The completed result a run of this exact content would reuse: same repo, path, tree digest, evaluator commit
     and mode. A failure is retried on resubmission, never reused."""
-    key = (repo, skill_path, digest, evaluator_version()["commit"], mode)
+    key = (repo, skill_path, digest, evaluator_key(evaluator_version()), mode)
     for prev in load_results() if results is None else results:
         if (
             prev.get("status") == "completed"
@@ -319,7 +467,7 @@ def reusable(repo: str, skill_path: str, digest: str, mode: str, results: list[d
                 prev["source"]["repo"],
                 prev["source"]["skill_path"],
                 prev["source"]["tree_digest"],
-                prev["evaluator"]["commit"],
+                evaluator_key(prev["evaluator"]),
                 prev["mode"],
             )
             == key
@@ -357,6 +505,8 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
         if not crash:
             break
     secs = round(sum(a["duration_s"] for a in attempts), 1)
+    if SCANNER_IN:
+        ev = evaluator_version()  # the scanner has now written its identity
     rec = {
         "id": f"{slug}@{commit[:12]}:{mode}:{stamp}",
         "skill_name": skill_dir.name,

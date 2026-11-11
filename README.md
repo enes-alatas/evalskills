@@ -29,8 +29,10 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
   sandbox and key exist). `shared-tasks/` only takes sets vendored from public benchmarks (ADR-0006). Today it
   holds the QuixBugs pilot (`shared-tasks/quixbugs-python/`).
 * `web/` holds the single-page app (no build step).
-* `deploy/` holds the static-only container (`Dockerfile`, `compose.yaml`) and the gVisor eval-daemon drafts
-  (`deploy/gvisor/`, unreviewed and untested).
+* `deploy/` holds the static-only stack: the app (`Dockerfile`), the scanner sidecar (`scanner/`, #65) and
+  `compose.yaml`. It also holds the gVisor eval-daemon drafts (`deploy/gvisor/`, unreviewed and untested).
+  `scripts/deploy-smoke.sh` builds both images and runs one real scan through them. CI runs it on PRs that touch
+  them.
 
 ## Setup
 
@@ -75,10 +77,11 @@ and without the skill) is blocked on two things: a model-provider key, and the i
 Docker daemon with gVisor, egress limited to a model gateway). See ADR-0003 in `docs/adr/`. Until then, live
 performance shows as "not run" and is never estimated.
 
-## Deploy (static only, not yet deployed)
+## Deploy (static only)
 
-`deploy/Dockerfile` pins SkillEvaluator, and `deploy/compose.yaml` runs the app as one hardened container, published
-on `127.0.0.1:8088` only, behind the host's Caddy. Copy `deploy/env.example` to `deploy/.env` (no edits needed), run
+`deploy/compose.yaml` runs two hardened containers. The app is published on `127.0.0.1:8088` only, behind the host's
+Caddy. The scanner is SkillEvaluator's Tier 1 image, pinned by digest, with no network, sharing only two exchange
+volumes with the app. Copy `deploy/env.example` to `deploy/.env` (no edits needed), run
 `docker compose -f deploy/compose.yaml up -d --build`, then add `skills.example.com { reverse_proxy 127.0.0.1:8088 }`
 to the Caddyfile and reload Caddy. Untrusted skill code never executes on the app host. The live
 sandbox runs separately, as described in `docs/ARCHITECTURE.md`. Hosting notes: `docs/HOSTING.md`.

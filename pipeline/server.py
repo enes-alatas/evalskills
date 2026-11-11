@@ -340,6 +340,13 @@ def worker():
                     note = rec.get("error")
                 with db() as c:
                     add_record(c, rec, s["category"])
+            except ev.ScannerUnavailable as e:
+                # Not a result: the job goes back to the queue and is tried again on the next pass (#65).
+                with db() as c:
+                    c.execute(
+                        "UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (str(e), job["id"])
+                    )
+                break
             except ValueError as e:
                 status, note = "unsupported", str(e)
             except Exception as e:  # noqa: BLE001
@@ -604,6 +611,8 @@ def main():
     bootstrap()
     init_db()
     import_results()
+    # Exchange entries older than two scan caps belong to no live job (#65).
+    ev.sweep_exchange(2 * (ev.SCANNER_PICKUP_TIMEOUT + ev.TIER1_TIMEOUT + 60))
     threading.Thread(target=worker, daemon=True).start()
     print(f"listening on :{port}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
