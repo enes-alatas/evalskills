@@ -1,0 +1,42 @@
+# Re-scans every catalog skill, at its recorded commit, through the digest-pinned Tier 1 image (#110). The new records
+# and sanitized reports are printed into the log (scripts/rescan_unpack.py reads them back); a PR commits them after
+# review. Public repositories are cloned read-only; the image runs with no network. Read-only token, no secrets.
+name: catalog-rescan
+
+on:
+  pull_request:
+    paths: ["scripts/catalog_rescan.py", ".github/workflows/catalog-rescan.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-rescan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rescan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pull the image anonymously
+        run: |
+          mkdir -p "$RUNNER_TEMP/anon"
+          docker --config "$RUNNER_TEMP/anon" pull -q "$IMAGE"
+      - name: re-scan
+        run: |
+          python3 -I scripts/catalog_rescan.py "$IMAGE" "$RUNNER_TEMP/rescan"
+          head -c 900000 "$RUNNER_TEMP/rescan/rescan.md" >> "$GITHUB_STEP_SUMMARY"
+      # The output is printed into the run's log, between markers, as a base64 tarball: the operator's egress allows
+      # log downloads, not artifact storage (#110). It holds only sanitized reports and summary records.
+      - name: print the output
+        run: |
+          echo "BEGIN catalog-rescan.tar.gz"
+          tar -C "$RUNNER_TEMP/rescan" -czf - results.jsonl rescan.json rescan.md reports | base64 -w 76
+          echo "END catalog-rescan.tar.gz"
