@@ -158,7 +158,7 @@ function detailHtml(s) {
   if (e) {
     rightCol += `<h3>Evaluation</h3><dl class="kv">
       <dt>Commit</dt><dd>${esc(short(e.source.commit))}</dd>
-      <dt>Evaluator</dt><dd>SkillEvaluator ${esc(e.evaluator.version)}</dd>
+      <dt>Evaluator</dt><dd>SkillEvaluator ${esc(e.evaluator.version)}${e.engine ? ` · <span title="${esc(e.evaluator.image || e.evaluator.commit || "")}">${esc(e.engine)}</span>` : ""}</dd>
       <dt>Mode</dt><dd>${esc(e.mode)}, no agent or model</dd>
       <dt>Cases</dt><dd>None (static)</dd>
       <dt>Runtime</dt><dd>${esc(e.duration_s)} s</dd>
@@ -174,7 +174,9 @@ function detailHtml(s) {
         <p class="hint" style="margin-top:8px">Schema &amp; Repository Governance fails for most third-party skills, because the default policy treats a missing metadata.author as high severity. It is shown but not ranked.</p></details>`;
     }
     if (s.history && s.history.length > 1) {
-      rightCol += `<details><summary>History</summary><ul class="checks">${s.history.map((h) => `<li><span class="mono">${esc(short(h.commit))} · ${esc(day(h.started_at))}</span>${h.score != null ? `<span class="mono">${h.score.toFixed(1)}</span>` : status(h.status)}</li>`).join("")}</ul></details>`;
+      // The engine shows only when the history spans more than one (#105).
+      const engines = new Set(s.history.map((h) => h.engine)).size > 1;
+      rightCol += `<details><summary>History</summary><ul class="checks">${s.history.map((h) => `<li><span class="mono">${esc(short(h.commit))} · ${esc(day(h.started_at))}${engines && h.engine ? ` · ${esc(h.engine)}` : ""}</span>${h.score != null ? `<span class="mono">${h.score.toFixed(1)}</span>` : status(h.status)}</li>`).join("")}</ul></details>`;
     }
   } else {
     rightCol += `<h3>Source</h3><div class="links"><a href="https://github.com/${esc(s.repo)}" target="_blank" rel="noopener">${esc(s.repo)}</a></div>`;
