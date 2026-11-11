@@ -9,7 +9,7 @@ const api = async (path, opts) => {
   return j;
 };
 
-const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null, openId: null, detail: null, watch: new Map(), done: null, opener: null };
+const state = { skills: [], meta: null, tab: "all", q: "", found: null, timer: null, openId: null, detail: null, watch: new Map(), done: null, opener: null, batch: null };
 const STATUS = { queued: "Queued", running: "Running", failed: "Failed", unsupported: "Unsupported", inconclusive: "Inconclusive", unknown: "Not evaluated" };
 const short = (sha) => (sha ? String(sha).slice(0, 7) : "");
 const day = (t) => { const m = String(t || "").match(/^(\d{4})-?(\d{2})-?(\d{2})/); return m ? `${m[1]}-${m[2]}-${m[3]}` : ""; };
@@ -98,7 +98,8 @@ async function load() {
   state.skills = await api("/api/skills");
   renderTabs();
   noticeFinished();
-  if (state.openId) { await fetchDetail(state.openId, true); renderResult(); }
+  if (state.openId) await fetchDetail(state.openId, true);
+  if (state.openId || state.batch) renderResult();
   renderBoard();
   const busy = state.skills.some((s) => s.state === "queued" || s.state === "running");
   clearTimeout(state.timer);
@@ -199,6 +200,7 @@ const dlg = () => $("#result");
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function renderResult() {
+  if (state.batch) return renderBatch();
   const id = state.openId;
   if (!id) return false;
   const s = (state.detail && state.detail.id === id ? state.detail : null) || state.skills.find((x) => x.id === id);
@@ -232,7 +234,63 @@ async function openResult(id, opener) {
   renderResult();
 }
 
+// A submission of several skills (#104): one row per skill, collapsed to the leaderboard's row (state, score,
+// security pills). One row at a time expands to the full result, in place.
+const busy = (s) => s.state === "queued" || s.state === "running";
+
+function renderBatch() {
+  const b = state.batch;
+  const rows = b.ids.map((id) => state.skills.find((x) => x.id === id)).filter(Boolean);
+  const done = rows.filter((s) => !busy(s)).length;
+  $("#r-title").textContent = `${rows.length} skills submitted`;
+  // Screen readers hear only the progress line, and only when it changes; the list itself re-renders silently.
+  const meta = $("#r-meta");
+  const html = `<span class="src">${esc(b.repo)}</span><span class="prog">${done === rows.length ? "All done" : `${done} of ${rows.length} done`}</span>`;
+  meta.setAttribute("aria-live", "polite");
+  if (meta.innerHTML !== html) meta.innerHTML = html;
+  const body = $("#r-body");
+  body.setAttribute("aria-live", "off");
+  // Polling re-renders the list: keep keyboard focus on its row and keep open sections open.
+  const focused = document.activeElement?.closest?.("button.brow")?.dataset.bid;
+  const opened = [...body.querySelectorAll("details[open] > summary")].map((x) => x.textContent);
+  body.className = "batch";
+  body.innerHTML = `<ul class="blist">${rows.map((s) => {
+    const open = b.open === s.id;
+    const d = open && state.detail && state.detail.id === s.id ? state.detail : s;
+    const name = `${esc(s.name)}<span class="meta"><span class="where" title="${esc(s.path)}">${esc(s.path)}</span>${pills(s)}</span>`;
+    return `<li class="${open ? "open" : ""}"><button class="row brow" data-bid="${esc(s.id)}" aria-expanded="${open}">
+      <span class="chev" aria-hidden="true"></span><span class="nm">${name}</span>${right(s)}</button>
+      ${open ? `<div class="detail inb">${detailHtml(d)}</div>` : ""}</li>`;
+  }).join("")}</ul>`;
+  body.querySelectorAll("details > summary").forEach((x) => { if (opened.includes(x.textContent)) x.parentElement.open = true; });
+  if (focused) body.querySelector(`button.brow[data-bid="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+  return true;
+}
+
+async function toggleBatchRow(id) {
+  const b = state.batch;
+  b.open = b.open === id ? null : id;
+  state.openId = b.open;
+  state.detail = null;
+  renderBatch();
+  if (b.open) { await fetchDetail(b.open); if (state.batch && state.batch.open === id) renderBatch(); }
+}
+
+function openBatch(repo, ids, opener) {
+  state.batch = { repo, ids, open: null };
+  state.openId = null; state.detail = null; state.opener = opener || null;
+  renderBatch();
+  const d = dlg();
+  if (!d.open) { d.showModal(); requestAnimationFrame(() => d.classList.add("in")); }
+}
+
 function forget() {
+  if (state.batch) {
+    state.batch = null;
+    $("#r-body").className = "detail";
+    $("#r-body").setAttribute("aria-live", "polite");
+    $("#r-meta").removeAttribute("aria-live");
+  }
   const was = state.openId;
   state.openId = null; state.detail = null;
   if (state.done === was) state.done = null;
@@ -265,6 +323,7 @@ function noticeFinished() {
     if (s.state === "queued" || s.state === "running") { state.watch.set(id, s.state); continue; }
     state.watch.delete(id);
     if (state.openId === id) { state.done = id; continue; }
+    if (state.batch && state.batch.ids.includes(id)) continue; // its row in the open submission already shows it
     const what = s.state === "completed" && hasScore(s) ? `scored ${s.structural.score.toFixed(1)}` : (STATUS[s.state] || s.state).toLowerCase();
     toast(`${s.name} ${what}`, id);
   }
@@ -376,13 +435,15 @@ async function submitSkills() {
   if (!paths.length) return addError("Choose at least one skill");
   const btn = $("#submit-skills"); btn.disabled = true;
   try {
-    const res = await api("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo: state.found.repo, paths, category: $("#cat").value }) });
+    const repo = state.found.repo; // showAdd(false) below clears state.found
+    const res = await api("/api/submit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ repo, paths, category: $("#cat").value }) });
     showAdd(false);
     state.tab = "all"; state.q = ""; $("#q").value = "";
     res.submitted.filter((x) => x.job).forEach((x) => state.watch.set(x.skill_id, "queued"));
-    const first = res.submitted.find((x) => x.job) || res.submitted.find((x) => x.skill_id);
+    const ids = [...new Set(res.submitted.filter((x) => x.skill_id).map((x) => x.skill_id))];
     await load();
-    if (first) await openResult(first.skill_id, $("#add-btn"));
+    if (ids.length > 1) openBatch(repo, ids, $("#add-btn"));
+    else if (ids.length) await openResult(ids[0], $("#add-btn"));
   } catch (err) {
     addError(err.message);
   } finally { btn.disabled = false; }
@@ -403,6 +464,7 @@ async function init() {
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("[data-tab]"); if (b) { state.tab = b.dataset.tab; renderTabs(); renderBoard(); } });
   $("#board").addEventListener("click", (e) => { const b = e.target.closest("button.row"); if (b) openResult(b.dataset.id, b); });
   $("#r-close").addEventListener("click", closeResult);
+  $("#r-body").addEventListener("click", (e) => { const b = e.target.closest("button.brow"); if (b) toggleBatchRow(b.dataset.bid); });
   dlg().addEventListener("cancel", (e) => { e.preventDefault(); closeResult(); });
   dlg().addEventListener("click", (e) => { if (e.target === dlg()) closeResult(); });
   // A browser can close the modal itself (e.g. a repeated Esc) without our cancel handler: keep state in step.
