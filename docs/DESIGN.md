@@ -131,9 +131,13 @@ See `ref-result-view.png`. Clicking a row opens the result in a dialog (radius 1
 black backdrop at 60%), with the skill name, `owner/repo @ sha` and the security pills in a sticky header. On
 mobile it is a bottom sheet and its two columns stack. Esc, the close button or a backdrop click closes it, and
 `/s/<id>` opens it directly.
-- After a submission, the dialog for the first submitted skill opens at once and follows queued, running and
-  completed live. When the result lands it says "Evaluation complete". If the dialog was closed meanwhile, a small
-  notice at the bottom offers "View".
+- After a one-skill submission, that skill's dialog opens at once and follows queued, running and completed live.
+  When the result lands it says "Evaluation complete". If the dialog was closed meanwhile, a small notice at the
+  bottom offers "View".
+- After a submission of several skills, one dialog lists them all (#104). Its header shows the repository and
+  "n of N done", and each row is a leaderboard row: name, folder, security pills, and the score or the state. Rows
+  are collapsed by default. Tapping a row expands that skill's full result in place, one at a time. Rows update
+  live, and no notice fires for a skill the open dialog already shows.
 
 - **Score breakdown:** Live tasks, Structure and Security each sit on their own line with their own figure. They are
   never blended. Live shows the no-skill baseline next to it. A one-line note says what the ranking uses and why

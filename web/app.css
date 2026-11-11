@@ -245,3 +245,18 @@ summary:hover { color: var(--fg2); }
   .toast { bottom: calc(16px + env(safe-area-inset-bottom)); }
   .kv { grid-template-columns: 104px 1fr; }
 }
+
+/* A submission of several skills (#104) */
+.sheet .batch { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 24px 24px; }
+.blist { list-style: none; margin: 0; padding: 0; }
+.blist > li { border-bottom: 1px solid var(--line); }
+.blist > li:last-child { border-bottom: 0; }
+.brow { grid-template-columns: 20px 1fr auto; }
+.chev { width: 8px; height: 8px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform 150ms var(--ease); justify-self: start; }
+.brow[aria-expanded="true"] .chev { transform: rotate(45deg); }
+.detail.inb { margin: 0 0 20px 20px; }
+.prog { margin-left: 10px; color: var(--fg2); }
+@media (max-width: 640px) {
+  .sheet .batch { padding: 4px 16px calc(32px + env(safe-area-inset-bottom)); }
+  .detail.inb { margin-left: 0; }
+}
