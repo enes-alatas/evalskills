@@ -1,0 +1,35 @@
+# Re-scans one catalog skill per category through the digest-pinned Tier 1 image and compares the scores with the
+# catalog's d136a59 runs (#65 review). Evidence for docs/EXPERIMENT_LOG.md, not a gate: it fails only if it can't run.
+# Public repositories are cloned read-only; the image runs with no network. Read-only token, no secrets.
+name: engine-parity
+
+on:
+  pull_request:
+    paths: ["scripts/engine_parity.py", ".github/workflows/engine-parity.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: pull the image anonymously
+        run: |
+          mkdir -p "$RUNNER_TEMP/anon"
+          docker --config "$RUNNER_TEMP/anon" pull -q "$IMAGE"
+      - name: re-scan and compare
+        run: |
+          python3 -I scripts/engine_parity.py "$IMAGE" "$RUNNER_TEMP/parity" 1
+          cat "$RUNNER_TEMP/parity/parity.md" >> "$GITHUB_STEP_SUMMARY"
