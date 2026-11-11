@@ -17,7 +17,7 @@ services:
       RESULTS_PATH: /home/app/inventory/data/results.jsonl   # writable volume, seeded from catalog/ on first start
       # Caddy's requests reach the container from this network's gateway (Docker's port proxy / NAT), so that is the
       # one address whose X-Forwarded-For the app believes. Set here so it always matches the network below.
-      TRUSTED_PROXIES: "${EVALSKILLS_GATEWAY:-172.31.250.1}/32"
+      TRUSTED_PROXIES: "${EVALSKILLS_GATEWAY:-172.30.250.1}/32"
     # --- isolation from the host and the other services ---
     user: "10001:10001"
     read_only: true
@@ -42,8 +42,8 @@ networks:
   evalskills:                                # this service alone; a fixed subnet makes the trusted gateway known
     ipam:
       config:
-        - subnet: "${EVALSKILLS_SUBNET:-172.31.250.0/24}"
-          gateway: "${EVALSKILLS_GATEWAY:-172.31.250.1}"
+        - subnet: "${EVALSKILLS_SUBNET:-172.30.250.0/24}"
+          gateway: "${EVALSKILLS_GATEWAY:-172.30.250.1}"
 
 volumes: { data: {}, reports: {}, cache: {}, uvcache: {} }
 
