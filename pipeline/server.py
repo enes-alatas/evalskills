@@ -180,6 +180,17 @@ def add_record(c, rec, category=None):
 # ---------------------------------------------------------------- views
 
 
+def engine_label(evaluator) -> str | None:
+    """The exact engine a result came from, short (#105): the scanner image digest, else the source commit."""
+    evaluator = evaluator or {}
+    image = evaluator.get("image") or ""
+    if "@sha256:" in image:
+        return f"image {image.split('@sha256:', 1)[1][:8]}…"
+    if evaluator.get("commit"):
+        return f"commit {str(evaluator['commit'])[:7]}"
+    return None
+
+
 def public_eval(rec):
     """Strip local paths; keep everything a reader needs to interpret the result."""
     if not rec:
@@ -187,6 +198,7 @@ def public_eval(rec):
     r = dict(rec)
     r.pop("_cached", None)
     r["report_dir"] = None
+    r["engine"] = engine_label(rec.get("evaluator"))
     # Only the sanitized JSON is public; full HTML/Markdown reports may quote matched secrets/PII lines.
     r["reports"] = {
         k: f"/reports/{rec['report_dir'].split('/', 1)[1]}/{fn}"
@@ -293,6 +305,7 @@ def skill_row(c, s, detail=False):
                 "commit": e["source"]["commit"],
                 "started_at": e["started_at"],
                 "score": ((e.get("tier1") or {}).get("quality") or {}).get("score"),
+                "engine": engine_label(e.get("evaluator")),
             }
             for e in evs
         ]
