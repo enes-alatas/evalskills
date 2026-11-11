@@ -75,10 +75,22 @@ verdict.
 
 ## Versioning and re-runs
 
-Every result records the repository, skill path, exact commit, a SHA-256 digest of the skill folder, the
-SkillEvaluator version and commit, the mode, the duration and the cost. If the folder digest and the evaluator commit
-are unchanged, a resubmission reuses the existing completed result instead of running again. A failed run is never
-reused: resubmitting the same skill runs it again.
+Every result records the repository, skill path, exact commit, a SHA-256 digest of the skill folder, the evaluator,
+the mode, the duration and the cost. The evaluator is recorded in one of two ways:
+
+* **Deployed scans** (the scanner sidecar, #65) record the SkillEvaluator version and the digest of the
+  `skillevaluator-tier1` image they ran in, with no commit. The digest pins SkillEvaluator's own base image, which
+  holds the evaluator and its scanners. Our scanner image adds only a small driver (`deploy/scanner/scanner.py`) on
+  top, which does not take part in scoring. The digest comes from the app's own configuration, not from the scanner.
+* **Local runs** (a development checkout, and the initial catalog) record the SkillEvaluator version and source
+  commit, with scanners provisioned by uv.
+
+A resubmission reuses the existing completed result, instead of running again, when the folder digest and the
+evaluator are unchanged: the image digest when there is one, else the commit. Moving to a new image digest re-runs
+skills on their next submission. A failed run is never reused: resubmitting the same skill runs it again.
+
+The initial catalog comes from SkillEvaluator `d136a59`. Whether the pinned image scores the same content the same
+way is checked in the experiment log (E10).
 
 ## Safety
 

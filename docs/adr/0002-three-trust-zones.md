@@ -40,3 +40,18 @@ interim exception.
   is built from, not by a separate image digest recorded with each run.
 - **Planned end state:** #65. Zone B runs the digest-pinned image on the `docker-evals` daemon with
   `--network none`, and zone A reads back only the report. That move closes this exception.
+
+**Amendment (2026-11-11, #65):** Static Tier 1 leaves the app container, which closes the 11-09 exception above.
+Enes approved this design on #65 on 2026-11-11.
+- **The scanner:** a `scanner` sidecar in the same compose file, built `FROM` the digest-pinned SkillEvaluator Tier 1
+  image that CI uses. It runs with `network_mode: none`, read-only, all capabilities dropped, non-root, with no env
+  file and no Docker socket. It mounts only two exchange volumes: the job inbox read-only and the report outbox.
+- **One scan per container life:** it scans one job and exits, and `restart: always` starts a fresh container, so
+  nothing persists from one scan to the next.
+- **The app:** zone A writes the skill snapshot to the inbox and reads back only the report files, as regular files.
+  It no longer installs SkillEvaluator or keeps a uv cache. Each run records the image digest as its evaluator.
+- **No gVisor for static scans:** the scanner runs on the main daemon under runc, not on `docker-evals`. Tier 1
+  parses and scans skills but executes none of their code, and the sidecar needs no socket in any container. Live
+  Tier 3 still runs only under gVisor (ADR-0003).
+- **When the scanner is down:** a job no scanner picks up goes back to the queue and stays `queued`. A scan that
+  overruns its time cap is `failed` ("scan timed out").

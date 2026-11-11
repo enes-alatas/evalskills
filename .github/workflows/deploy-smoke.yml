@@ -1,4 +1,4 @@
-# Builds the deploy image and runs it the way the README deploy steps do, then submits one public skill end to end
+# Builds the deploy images (app and scanner, #65) and runs them the way the README deploy steps do, then submits one public skill end to end
 # (#73). Read-only token, no secrets. The scan is static Tier 1: no skill code runs and no model is called.
 name: deploy-smoke
 

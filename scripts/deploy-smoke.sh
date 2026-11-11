@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build and run the deploy image exactly as the README says, then check it end to end (#73).
+# Build and run the deploy stack exactly as the README says, then check it end to end (#73), including the scanner
+# sidecar's isolation (#65).
 # Usage: scripts/deploy-smoke.sh   (needs Docker with compose v2, curl and jq; leaves the stack running unless
 # SMOKE_DOWN=1). The scan is static Tier 1: no skill code runs and no model is called.
 set -euo pipefail
@@ -38,6 +39,16 @@ seeded=$(curl -sf "$BASE/api/skills" | jq length) || fail "/api/skills unreadabl
 [ "$seeded" -gt 0 ] || fail "/api/skills lists no skills"
 echo "booted: $seeded catalog skills"
 
+# The scanner sidecar (#65): no network, and the app runs no evaluator and holds no Docker socket.
+[ "$(docker inspect -f '{{.HostConfig.NetworkMode}}' evalskills-scanner)" = none ] || fail "the scanner has a network"
+if "${COMPOSE[@]}" exec -T scanner python -I -c \
+  "import socket; socket.create_connection(('140.82.112.3', 443), 5)" >/dev/null 2>&1; then
+  fail "the scanner opened a network connection"
+fi
+"${COMPOSE[@]}" exec -T evalskills sh -c '! command -v skillevaluator && ! command -v uv && ! [ -e /var/run/docker.sock ]' ||
+  fail "the app container has an evaluator, uv or a Docker socket"
+echo "isolated: the scanner has no network; the app runs no evaluator"
+
 # POST a JSON body; sets CODE and BODY so a failure can say what the server answered (#85).
 post() {
   local out
@@ -68,5 +79,9 @@ done
 [ "$state" = completed ] || fail "scan still '$state' after ${SCAN_TIMEOUT}s"
 score=$(jq -r '.structural.score' <<<"$row")
 [ "$score" != null ] || fail "completed without a structural score"
+image=$(grep -o 'ghcr.io/nvidia/skillevaluator-tier1@sha256:[0-9a-f]*' deploy/compose.yaml | head -1)
+[ "$(jq -r '.evaluation.evaluator.image' <<<"$row")" = "$image" ] ||
+  fail "the result does not name the scanner image: $(jq -c '.evaluation.evaluator' <<<"$row")"
+echo "scanned by: $(jq -c '.evaluation.evaluator' <<<"$row"), incomplete: $(jq -c '.evaluation.tier1.incomplete_scans' <<<"$row")"
 [ "$(docker inspect -f '{{.State.Running}}' evalskills)" = true ] || fail "container stopped after the scan"
 echo "deploy smoke passed: structural score $score for $REPO:$SKILL"
