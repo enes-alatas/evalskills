@@ -108,3 +108,32 @@
   and the proposed code-review set (#58) was closed without merging. None of them had run live.
 - Live results will therefore be per-skill Skill Lift on each skill's own cases, not comparable across skills,
   until a public benchmark is vendored for a category.
+
+## E10 — same content, two engines: the pinned Tier 1 image against d136a59 (2026-11-11, #65)
+- **Why:** the catalog was scored by SkillEvaluator `d136a59`, with scanners provisioned by uv. Deployed scans now run
+  in `skillevaluator-tier1@sha256:9d5483…` (#65). A score on the board should not depend on which engine ran it.
+- **How:** CI's `engine-parity` job (`scripts/engine_parity.py`) took one completed catalog skill per category (11
+  skills, 7 repos), checked out each at its recorded commit, and confirmed the folder digest was unchanged (11/11).
+  It then scanned each through the image with the scanner sidecar's command (no network, read-only) and compared
+  the summary fields. It ran 4 times on #101 (runs 43018221700, 43022639603, 43024396509, 43025349850), with the same
+  outcome each time. $0, no model calls. 168–217 s of scanning per run, against 142 s for the original runs; the
+  extra is mostly container start-up.
+- **Scores: identical in 11/11, in every run.** Structural score, grade, the four dimensions, overall status and the
+  security pill counts (`security.distinct`) were the same for every skill. The all-findings `severity_counts` match
+  in 7/11; the other 4 have one more medium, which is the location finding below.
+- **One finding differs, but not because of the engine.** In 4/11 skills the image run adds one medium "Skill not in
+  standard location (skills/ or team-skills/)" under Schema & Repository Governance. All four catalog records come
+  from the 11-07 pilot (pdf, frontend-design, requesting-code-review, test-driven-development). The pilot's 16
+  scans ran on folders in place in the repository, so the check passed. Later runs scan a snapshot outside
+  `skills/`, and 155 of the 180 catalog records carry the finding. Of the 25 without it, 16 are the pilot, and for
+  the other 9 the reason is not yet known. The quality score doesn't count the finding (identical above). It only
+  changes the "all findings" total by one. Re-scanning the pilot records would make them consistent; ranking does
+  not need it.
+- **One check status differs, every time:** for trailofbits `semgrep`, Code Risk Analysis is `incomplete` in the
+  image, with the semgrep scanner listed as incomplete (3/3 runs that recorded it). In the catalog it is `passed`.
+  Both have 0 findings. This is the one skill in the sample whose own files are semgrep rules and configs. The
+  likeliest cause is the image's semgrep needing something the no-network run lacks, but that is unconfirmed. The
+  leaderboard shows `incomplete` scans as such, never as a pass, so a re-scan of this skill would show "incomplete",
+  not a clean result.
+- -> The two engines may share the board. Scores are keyed by engine (METHODOLOGY, "Versioning and re-runs"), so a
+  skill re-scanned under the image shows the image as its evaluator.
