@@ -1,0 +1,90 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+/* Diagram style: docs/DESIGN.md. Fonts from web/fonts (SIL OFL 1.1). */
+@font-face{font-family:Geist;src:url(file:///home/loop/work/web/fonts/Geist-Regular.woff2);font-weight:400}
+@font-face{font-family:Geist;src:url(file:///home/loop/work/web/fonts/Geist-Medium.woff2);font-weight:500}
+@font-face{font-family:"Geist Mono";src:url(file:///home/loop/work/web/fonts/GeistMono-Regular.woff2)}
+body{margin:0;background:#07080B;color:#EEF0F5;font:400 14px/22px Geist,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{width:1180px;padding:40px 36px;box-sizing:border-box}
+h1{margin:0 0 6px;font-size:20px;font-weight:500}
+.sub{margin:0 0 28px;color:#A3A9B8}
+svg{display:block}
+.t{font:500 14px Geist,sans-serif;fill:#EEF0F5}
+.m{font:12px "Geist Mono",monospace;fill:#7A8296}
+.z{font:13px Geist,sans-serif;fill:#A3A9B8}
+.e{font:11px "Geist Mono",monospace;fill:#7A8296}
+.box{fill:#0E1015;stroke:#EEF0F524}
+.hotbox{fill:#0E1015;stroke:#5FD4C4}
+.quiet{fill:none;stroke:#EEF0F51A;stroke-dasharray:3 4}
+.trusted{fill:#EEF0F505;stroke:#EEF0F51F}
+.untrusted{fill:none;stroke:#EEF0F533;stroke-dasharray:4 4}
+.ln{stroke:#4A5163;stroke-width:1.25;fill:none;marker-end:url(#a)}
+.hot{stroke:#5FD4C4;marker-end:url(#h)}
+.notes{display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px;margin-top:32px;padding-top:24px;border-top:1px solid #EEF0F514}
+.notes b{display:block;font-weight:500;margin-bottom:8px}
+.notes ul{margin:0;padding:0;list-style:none;color:#A3A9B8;font-size:13px;line-height:20px}
+.notes li{padding:4px 0}
+code{font:12px "Geist Mono",monospace;color:#EEF0F5}
+</style></head><body><div class="wrap">
+<h1>Static scans in a contained scanner</h1>
+<p class="sub">Proposal for #65. The app never runs SkillEvaluator itself. A sidecar with no network scans each skill and hands back only the report</p>
+<svg width="1108" height="490" viewBox="0 0 1108 490">
+<defs>
+ <marker id="a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0L8,4L0,8" fill="none" stroke="#4A5163" stroke-width="1.25"/></marker>
+ <marker id="h" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0L8,4L0,8" fill="none" stroke="#5FD4C4" stroke-width="1.25"/></marker>
+</defs>
+
+<!-- GitHub -->
+<rect x="230" y="0" width="190" height="56" rx="8" class="box"/><text x="246" y="24" class="t">GitHub</text><text x="246" y="42" class="m">public repos</text>
+<path d="M325,158 V60" class="ln"/><text x="333" y="88" class="e">shallow clone</text>
+
+<!-- A: public app -->
+<rect x="0" y="96" width="440" height="376" rx="14" class="trusted"/>
+<text x="20" y="122" class="z">A · Public app</text><text x="20" y="140" class="e">no secrets · runs no skill code</text>
+<rect x="20" y="160" width="180" height="56" rx="8" class="box"/><text x="36" y="184" class="t">Web and API</text><text x="36" y="202" class="m">discover, submit</text>
+<rect x="230" y="160" width="190" height="72" rx="8" class="box"/><text x="246" y="184" class="t">Static worker</text><text x="246" y="202" class="m">queue · snapshot</text><text x="246" y="220" class="m">sanitise · store</text>
+<path d="M200,188 H226" class="ln"/>
+<path d="M262,234 V316" class="ln"/>
+<rect x="20" y="320" width="400" height="56" rx="8" class="box"/><text x="36" y="344" class="t">Own volumes</text><text x="36" y="362" class="m">data (SQLite) · cache (clones) · reports</text>
+<rect x="20" y="396" width="400" height="56" rx="8" class="quiet"/><text x="36" y="420" class="z">Removed from A</text><text x="36" y="438" class="m">in-image SkillEvaluator · uvcache volume</text>
+
+<!-- exchange -->
+<rect x="460" y="96" width="270" height="240" rx="14" class="trusted"/>
+<text x="480" y="122" class="z">Exchange volume</text><text x="480" y="140" class="e">the only thing both sides mount</text>
+<rect x="480" y="160" width="230" height="56" rx="8" class="box"/><text x="496" y="184" class="t">inbox/&lt;job&gt;</text><text x="496" y="202" class="m">skill snapshot · job.json</text>
+<rect x="480" y="256" width="230" height="56" rx="8" class="box"/><text x="496" y="280" class="t">outbox/&lt;job&gt;</text><text x="496" y="298" class="m">tier1 json · html · md</text>
+
+<!-- scanner -->
+<rect x="770" y="96" width="338" height="270" rx="14" class="untrusted"/>
+<text x="790" y="122" class="z">Scanner · contained</text><text x="790" y="140" class="e">network none · no secrets · no Docker socket</text>
+<rect x="790" y="160" width="298" height="110" rx="8" class="hotbox"/><text x="806" y="184" class="t">Scanner sidecar</text>
+<text x="806" y="204" class="m">skillevaluator-tier1@sha256:9d54…</text><text x="806" y="222" class="m">read-only · cap_drop ALL · non-root</text><text x="806" y="240" class="m">memory, pids, CPU and time caps</text><text x="806" y="258" class="m">one job, then exit</text>
+<rect x="790" y="290" width="298" height="56" rx="8" class="box"/><text x="806" y="314" class="t">Fresh start per scan</text><text x="806" y="332" class="m">restart: always · empty tmpfs</text>
+
+<!-- main path -->
+<path d="M420,188 H476" class="ln hot"/><text x="430" y="180" class="e">1 write</text>
+<path d="M710,188 H786" class="ln hot"/><text x="718" y="180" class="e">2 read</text>
+<path d="M790,250 H750 V284 H714" class="ln hot"/><text x="722" y="244" class="e">3 report</text>
+<path d="M480,284 H380 V236" class="ln hot"/><text x="388" y="276" class="e">4 store</text>
+</svg>
+
+<div class="notes">
+ <div><b>Isolation</b><ul>
+  <li>The scanner has no network, so nothing a skill contains can call out</li>
+  <li>It never sees the database, the clones or the public reports</li>
+  <li>No container gets any Docker socket, and the scanner has no env file</li>
+  <li>A read-only image and one job per container life mean nothing persists between scans</li>
+ </ul></div>
+ <div><b>Flow</b><ul>
+  <li>Unchanged skills (same commit and folder digest) are not rescanned</li>
+  <li>Scanner down: the job stays <code>queued</code> and shows as queued, never as a score</li>
+  <li>Past the time cap: <code>failed</code>, with the reason "scan timed out"</li>
+  <li>Each run records the image digest and the evaluator version</li>
+ </ul></div>
+ <div><b>What it changes</b><ul>
+  <li>It closes ADR-0002's interim exception from 11-09 (add-only amendment)</li>
+  <li>It needs no gVisor daemon. Tier 1 parses skills and runs none of their code</li>
+  <li>Live Tier 3 still runs under gVisor on <code>docker-evals</code> (ADR-0003)</li>
+  <li>Unit-tested here. The compose wiring is checked on the VPS with <code>docker compose up</code></li>
+ </ul></div>
+</div>
+</div></body></html>
