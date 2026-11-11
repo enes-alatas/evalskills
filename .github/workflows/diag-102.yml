@@ -1,0 +1,47 @@
+# Throwaway diagnostic for #102 (never merged): why Code Risk Analysis is incomplete for trailofbits' semgrep skill
+# in the pinned Tier 1 image. Static scan only, no secrets, read-only token.
+name: diag-102
+on:
+  pull_request:
+    paths: [".github/workflows/diag-102.yml"]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+    steps:
+      - name: fetch the skill at the catalog commit
+        run: |
+          git init -q src && cd src
+          git fetch -q --depth 1 https://github.com/trailofbits/skills.git e4dd0bb5b15535f7c5a0834187dffba6ac37e4ff
+          git -c core.symlinks=false checkout -q FETCH_HEAD
+          mkdir -p "$RUNNER_TEMP/in" && cp -r plugins/static-analysis/skills/semgrep "$RUNNER_TEMP/in/"
+          find "$RUNNER_TEMP/in" -type f | sed "s|$RUNNER_TEMP/in/||" | sort
+      - name: pull
+        run: mkdir -p "$RUNNER_TEMP/anon" && docker --config "$RUNNER_TEMP/anon" pull -q "$IMAGE"
+      - name: scan, no network and with network
+        run: |
+          for net in none bridge; do
+            out="$RUNNER_TEMP/out-$net"; mkdir -p "$out"; chmod 777 "$out"
+            echo "=== network=$net"
+            docker run --rm --network $net --user "$(id -u):$(id -g)" --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp:size=1g,mode=1777 -e HOME=/tmp -e TMPDIR=/tmp \
+              --mount "type=bind,src=$RUNNER_TEMP/in,dst=/scan,readonly" --mount "type=bind,src=$out,dst=/reports" \
+              -w /tmp --entrypoint skillevaluator "$IMAGE" tier1 /scan/semgrep --no-llm -r json -o /reports \
+              > "$out/stdout.log" 2>&1 || true
+            grep -i -n "semgrep\|code risk\|incomplete\|error\|timeout" "$out/stdout.log" | head -40 || true
+            python3 -I - "$out/skillevaluator-tier1.json" <<'PY'
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print("top incomplete_scans:", r.get("incomplete_scans"))
+          for x in r.get("results", []):
+              if x.get("validator") == "Code Risk Analysis":
+                  slim = {k: v for k, v in x.items() if k != "findings"}
+                  print(json.dumps(slim, indent=1)[:6000])
+          PY
+          done
+          echo "=== semgrep in the image"
+          docker run --rm --network none --entrypoint sh "$IMAGE" -c 'command -v semgrep; semgrep --version 2>&1 | head -3' || true
