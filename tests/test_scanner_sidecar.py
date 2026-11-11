@@ -239,11 +239,13 @@ def test_worker_requeues_when_the_scanner_is_unavailable(tmp_path, monkeypatch):
             raise Stop
 
     monkeypatch.setattr(server.WAKE, "wait", wait)
+    monkeypatch.setattr(server, "SCANNER_RETRY_S", 0)
     with pytest.raises(Stop):
         server.worker()
     with server.db() as c:
-        job = c.execute("SELECT status, note, finished_at FROM jobs").fetchone()
-        assert job["status"] == "queued" and "stays queued" in job["note"] and job["finished_at"] is None
+        job = c.execute("SELECT status, note, started_at, finished_at FROM jobs").fetchone()
+        assert job["status"] == "queued" and job["note"] == server.WAITING_NOTE
+        assert job["started_at"] is None and job["finished_at"] is None
         assert c.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 0
 
 
@@ -262,3 +264,77 @@ def test_the_minimum_life_is_spent_before_the_claim(exchange):
     assert not (outbox / "job1").exists()
     t.join(15)
     assert (outbox / "job1" / "done").exists()
+
+
+def _seed_job(server, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DB_PATH", tmp_path / "inventory.db")
+    server.init_db()
+    with server.db() as c:
+        c.execute(
+            "INSERT INTO skills VALUES (?,?,?,?,?,?,?,?)",
+            ("example/repo:skills/demo", "example/repo", "skills/demo", "demo", "Fixture", "docs", "fixture", 0),
+        )
+        c.execute(
+            "INSERT INTO jobs (skill_id, status, created_at) VALUES (?, 'queued', 0)", ("example/repo:skills/demo",)
+        )
+    monkeypatch.setattr(server, "prune_clones", lambda: None)
+
+
+def test_a_job_is_running_only_once_the_scan_starts(tmp_path, monkeypatch):
+    """#103: the worker leaves the job queued until evaluate() reports the scan started, then running."""
+    import server
+
+    _seed_job(server, tmp_path, monkeypatch)
+    seen = []
+
+    def state():
+        with server.db() as c:
+            return c.execute("SELECT status FROM jobs").fetchone()["status"]
+
+    def evaluate(*_a, on_start=None, **_k):
+        seen.append(state())
+        on_start()
+        seen.append(state())
+        raise ValueError("stop here")
+
+    monkeypatch.setattr(ev, "evaluate", evaluate)
+
+    class Stop(Exception):
+        pass
+
+    calls = {"n": 0}
+
+    def wait(timeout=None):  # noqa: ARG001
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise Stop
+
+    monkeypatch.setattr(server.WAKE, "wait", wait)
+    with pytest.raises(Stop):
+        server.worker()
+    assert seen == ["queued", "running"]
+
+
+def test_the_sidecar_reports_the_start_when_the_scanner_claims(exchange):
+    inbox, outbox, skill, tmp = exchange
+    starts = []
+
+    def on_start():
+        starts.append(sorted(p.name for p in outbox.iterdir() if not p.name.startswith(".")))
+
+    t = threading.Thread(target=scanner.serve, kwargs={"once": True, "max_wait_s": 10})
+    t.start()
+    out = tmp / "report-out"
+    out.mkdir()
+    code, _secs, _log = ev.run_tier1_sidecar(skill, out, on_start)
+    t.join(10)
+    assert code == 0 and len(starts) == 1 and len(starts[0]) == 1  # called once, after the claim
+
+
+def test_no_scanner_means_no_start(exchange, monkeypatch):
+    _inbox, _outbox, skill, tmp = exchange
+    monkeypatch.setattr(ev, "SCANNER_PICKUP_TIMEOUT", 0.2)
+    starts = []
+    with pytest.raises(ev.ScannerUnavailable):
+        ev.run_tier1_sidecar(skill, tmp, lambda: starts.append(1))
+    assert starts == []

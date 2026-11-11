@@ -63,8 +63,8 @@ It hasn't run live yet.
 
 | Status | Meaning |
 | --- | --- |
-| queued | Waiting for the single evaluation worker |
-| running | SkillEvaluator is running |
+| queued | Waiting for the single evaluation worker, or for the scanner to pick the job up. The job says which |
+| running | SkillEvaluator is running. A deployed scan is running once the scanner has picked the job up |
 | completed (Evaluated) | A report was produced. Scores come from it |
 | failed | The evaluator ran but produced no report (timeout, crash). No score is shown |
 | unsupported | The path has no SKILL.md at the current commit, or the repo can't be read |

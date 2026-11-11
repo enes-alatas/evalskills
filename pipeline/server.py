@@ -60,6 +60,8 @@ TRUSTED_PROXIES = parse_networks(os.environ.get("TRUSTED_PROXIES", DEFAULT_TRUST
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))  # how many proxies append to the header
 GIT_LOCK = ev.GIT_LOCK
 WAKE = threading.Event()
+SCANNER_RETRY_S = float(os.environ.get("SCANNER_RETRY_S", "30"))  # pause before handing the scanner a job again (#103)
+WAITING_NOTE = "Waiting for the scanner. The scan starts as soon as it is available."
 
 
 def db():
@@ -327,11 +329,18 @@ def worker():
                 job = c.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
                 if not job:
                     break
-                c.execute("UPDATE jobs SET status='running', started_at=? WHERE id=?", (time.time(), job["id"]))
                 s = c.execute("SELECT * FROM skills WHERE id=?", (job["skill_id"],)).fetchone()
+
+            # The job stays queued until the scan really starts: for the sidecar, when the scanner claims it (#103).
+            def started(jid=job["id"]):
+                with db() as c:
+                    c.execute(
+                        "UPDATE jobs SET status='running', started_at=?, note=NULL WHERE id=?", (time.time(), jid)
+                    )
+
             status, eid, note = "failed", None, None
             try:
-                rec = ev.evaluate(s["repo"], s["path"], s["category"])
+                rec = ev.evaluate(s["repo"], s["path"], s["category"], on_start=started)
                 eid = rec["id"]
                 status = rec["status"]
                 if rec.get("_cached"):
@@ -340,12 +349,13 @@ def worker():
                     note = rec.get("error")
                 with db() as c:
                     add_record(c, rec, s["category"])
-            except ev.ScannerUnavailable as e:
-                # Not a result: the job goes back to the queue and is tried again on the next pass (#65).
+            except ev.ScannerUnavailable:
+                # Not a result: the job stays queued and says why, and is offered again after a pause (#65, #103).
                 with db() as c:
                     c.execute(
-                        "UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (str(e), job["id"])
+                        "UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (WAITING_NOTE, job["id"])
                     )
+                time.sleep(SCANNER_RETRY_S)
                 break
             except ValueError as e:
                 status, note = "unsupported", str(e)

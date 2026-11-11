@@ -287,9 +287,13 @@ def scanner_crash(rep_path: Path) -> str | None:
     return None
 
 
-def run_tier1(skill_dir: Path, out: Path, llm: bool) -> tuple[int, float, str]:
+def run_tier1(skill_dir: Path, out: Path, llm: bool, on_start=None) -> tuple[int, float, str]:
+    """Run Tier 1 on skill_dir. on_start() is called once the scan really begins: at once for a local run, and when
+    the scanner claims the job for the sidecar (#103), so a job waiting for the scanner is never shown as running."""
     if SCANNER_IN and not llm:
-        return run_tier1_sidecar(skill_dir, out)
+        return run_tier1_sidecar(skill_dir, out, on_start)
+    if on_start:
+        on_start()
     env = git_env()
     if llm:
         env.update({k: v for k, v in os.environ.items() if k in PROVIDER_VARS})
@@ -410,7 +414,7 @@ def sweep_exchange(max_age_s: float) -> list[str]:
     return removed
 
 
-def run_tier1_sidecar(skill_dir: Path, out: Path) -> tuple[int, float, str]:
+def run_tier1_sidecar(skill_dir: Path, out: Path, on_start=None) -> tuple[int, float, str]:
     """Hand skill_dir to the scanner sidecar and copy its report files into out. Raises ScannerUnavailable if no
     scanner claims the job within SCANNER_PICKUP_TIMEOUT; a claimed job that never finishes is a timeout (-9)."""
     inbox, outbox = Path(SCANNER_IN), Path(SCANNER_OUT)
@@ -421,14 +425,21 @@ def run_tier1_sidecar(skill_dir: Path, out: Path) -> tuple[int, float, str]:
     os.rename(staging, inbox / job)  # the scanner sees the job only once it is complete
     claimed, done = outbox / job, outbox / job / "done"
     t0 = time.monotonic()
+    started = False
     try:
         while not done.exists():
             waited = time.monotonic() - t0
-            if not claimed.exists() and waited > SCANNER_PICKUP_TIMEOUT:
+            if not started and claimed.exists():
+                started = True
+                if on_start:
+                    on_start()
+            if not started and waited > SCANNER_PICKUP_TIMEOUT:
                 raise ScannerUnavailable("No scanner picked up the job; it stays queued.")
             if waited > SCANNER_PICKUP_TIMEOUT + TIER1_TIMEOUT + 60:
                 return -9, round(waited, 1), "TIMEOUT: scan timed out"
             time.sleep(SCANNER_POLL_S)
+        if not started and on_start:
+            on_start()  # claimed and finished between two polls
         return read_job(outbox, job, out, round(time.monotonic() - t0, 1))
     finally:
         shutil.rmtree(inbox / job, ignore_errors=True)
@@ -436,7 +447,9 @@ def run_tier1_sidecar(skill_dir: Path, out: Path) -> tuple[int, float, str]:
             shutil.rmtree(claimed, ignore_errors=True)
 
 
-def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, force: bool = False) -> dict:
+def evaluate(
+    repo: str, skill_path: str, category: str = "", llm: bool = False, force: bool = False, on_start=None
+) -> dict:
     snap_root = Path(tempfile.mkdtemp(prefix="skill-snap-"))
     try:
         with GIT_LOCK:
@@ -451,7 +464,7 @@ def evaluate(repo: str, skill_path: str, category: str = "", llm: bool = False, 
             # Snapshot only the skill folder (no symlinks, no .git) so the scan sees exactly what is recorded.
             skill_dir = snap_root / src.name
             shutil.copytree(src, skill_dir, symlinks=True, ignore=shutil.ignore_patterns(".git"))
-        return _evaluate(repo, skill_path, category, llm, force, skill_dir, commit)
+        return _evaluate(repo, skill_path, category, llm, force, skill_dir, commit, on_start)
     finally:
         shutil.rmtree(snap_root, ignore_errors=True)
 
@@ -482,7 +495,7 @@ def up_to_date(repo: str, paths: list[str], repo_dir: Path, mode: str = "tier1-s
     return {p for p in paths if reusable(repo, p, tree_digest(repo_dir / p), mode, results)}
 
 
-def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
+def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit, on_start=None):
     digest = tree_digest(skill_dir)
     ev = evaluator_version()
     mode = "tier1-llm" if llm else "tier1-static"
@@ -498,7 +511,7 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit):
     rep_path = out / "skillevaluator-tier1.json"
     attempts = []
     for attempt in range(2):  # SkillSpector crashes transiently (~1 in 20 runs); retry once
-        code, secs, log = run_tier1(skill_dir, out, llm)
+        code, secs, log = run_tier1(skill_dir, out, llm, on_start if attempt == 0 else None)
         (out / f"run{'' if attempt == 0 else attempt + 1}.log").write_text(log)
         crash = scanner_crash(rep_path)
         attempts.append({"exit_code": code, "duration_s": secs, "scanner_crash": crash})

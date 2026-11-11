@@ -136,7 +136,8 @@ function detailHtml(s) {
   if (state.done === s.id && s.state === "completed") lead += `<p class="callout done">Evaluation complete</p>`;
   if (state.done === s.id && s.state === "failed") lead += `<p class="callout bad">Evaluation finished without a result</p>`;
 
-  if (s.state === "queued") lead += `<p class="callout">${status("queued")} Waiting in the evaluation queue. This view updates on its own.</p>`;
+  // A queued job may say why it waits, e.g. for the scanner (#103).
+  if (s.state === "queued") lead += `<p class="callout">${status("queued")} ${s.job && s.job.note ? esc(s.job.note) : "Waiting in the evaluation queue."} This view updates on its own.</p>`;
   if (s.state === "running") lead += `<p class="callout">${status("running")} SkillEvaluator is running static checks now, usually under a minute. This view updates on its own.</p>`;
   if (s.job && s.job.note && !["queued", "running"].includes(s.state)) lead += `<p class="callout">${esc(s.job.note)}</p>`;
   if (e && e.status === "failed") lead += `<p class="callout bad">The evaluation did not produce a report: ${esc(e.error || "unknown error")}. No score is shown.</p>`;
