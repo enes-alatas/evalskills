@@ -137,3 +137,40 @@
   not a clean result.
 - -> The two engines may share the board. Scores are keyed by engine (METHODOLOGY, "Versioning and re-runs"), so a
   skill re-scanned under the image shows the image as its evaluator.
+
+## E11 — the whole catalog re-scanned under the pinned Tier 1 image (2026-11-11, #110)
+- **Why:** the `d136a59` catalog runs never ran semgrep ("Semgrep not installed; skipped", 65/180 reports), so
+  Code Risk Analysis there was Bandit-only (#102). The re-scan also found that 30 skills, from the later batches,
+  never ran SkillSpector ("skillspector not installed"). The board showed those as Security Scan `incomplete`, never
+  as a pass. Deployed scans already use the image (#65), so the board mixed two engines with different coverage.
+- **How:** CI's `catalog-rescan` job (`scripts/catalog_rescan.py`, run 43068622669) took each skill's newest record
+  (166 skills, 35 repos), checked it out at its recorded commit and confirmed the folder digest was unchanged
+  (166/166). It then scanned each through `skillevaluator-tier1@sha256:9d5483…` with the E10 command (no network,
+  read-only). The image reports SkillEvaluator `0.7.2`, against `0.8.0` for `d136a59`. That is the image's own
+  version string, not an older engine: this digest is the one upstream's 0.8.0 release bundle pins
+  (`ci/bundles/0.8.0/skill-checks.yml` at `d136a59`). $0, no model calls. 4,493 s of scanning in total (median 10.7 s per skill), against 2,249 s for the
+  original runs; the extra is mostly container start-up. All 166 completed. The new records are appended, and the old
+  ones stay as history.
+- **Structural scores: identical in 166/166.** The score, grade, dimensions and overall status are the same for every
+  skill. A first run showed 4 root-level skills losing 2.5 points on discoverability. That came from the script, not
+  the engine: it named the scanned folder differently from the catalog run. Fixed before this run.
+- **Security changed for 51 skills, all from scanners that now run:**
+  - SkillSpector (Security Scan) ran on the 30 skills that never had it: 16 `failed` with findings, 9 `passed`, and
+    5 still `incomplete`. Those 5 are SkillSpector's own "partial analysis": SKILL.md references files outside the
+    skill folder, which a folder snapshot doesn't have (`reference_missing`). That's an evaluation-environment limit,
+    not the skill's fault.
+  - semgrep (Code Risk Analysis) now runs. 3 skills newly `fail`, on real findings: `shell=True` in webapp-testing
+    (anthropics and its ComposioHQ copy) and `child_process.exec` in obra `brainstorming`. 6 come back `incomplete`
+    with semgrep as the incomplete scanner, the parse-error case from #102. One (nuwa-skill) goes `failed` →
+    `passed`.
+  - Code Integrity & Hygiene goes `passed` → `failed` for 2 trailofbits skills, on dead links that point outside the
+    skill folder (`../../workflows/…`). The old engine didn't report them.
+  - The all-findings `severity_counts` rise for 36 skills, and the security pill counts (`security.distinct`) for 25.
+- **Security pills on the board change for 24 skills:** 8 go from incomplete to a clean result. 16 now show a
+  medium or high finding where they showed none or a lower one.
+- -> The board now has one engine with full scanner coverage, so security results are comparable across the
+  catalog. Structural scores were unaffected. `incomplete` is still common: 132/166 pills. In all 132, SkillSpector
+  reported partial analysis, whether the check failed or not. 118 of those cite references to files outside the
+  skill folder (`reference_missing`), 42 a parse limit and 2 a timeout; a skill can cite more than one. It is shown
+  as such, never as a pass. Scanning the whole repository instead of the folder would close most of the first
+  group; that's a possible follow-up, not part of this change.
