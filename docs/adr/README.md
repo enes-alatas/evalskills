@@ -12,3 +12,4 @@ or write a new record that supersedes it.
 | [0004](0004-secrets-live-on-the-host.md) | Secrets live only on the host, one container each, as files |
 | [0005](0005-development-process.md) | One shared GitHub identity, PR-only, Enes merges |
 | [0006](0006-no-self-authored-benchmarks.md) | Live runs use SkillEvaluator's content; shared task sets only from public benchmarks |
+| [0007](0007-no-public-live-tier-without-funding.md) | No public live tier without a model budget or sponsor; the free trial key backs only an internal pilot |
