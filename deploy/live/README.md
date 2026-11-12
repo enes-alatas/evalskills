@@ -42,6 +42,27 @@ Trials reach these two ports and nothing else (`deploy/gvisor/firewall.sh`).
   was needed.
 - Streamed completions arrive with a usage chunk. Calls without one show as `unmetered` in `usage`.
 
+## Running the pilot (#121; after the step-0 checks pass)
+The runner is `pipeline/live_pilot.py`. It runs the skills in `pilot/skills.tsv` one at a time, with the baseline
+arm on. Each run gets its own token, which is revoked when the run ends, and the gateway's counts go into the run's
+record. Records go to `reports/pilot/results.jsonl`, which is never committed: the board shows no pilot result
+(ADR-0007), and the public build refuses any `mode: tier3` record.
+
+Prerequisites on the host: this repository, `uv`, and a SkillEvaluator checkout at the pinned version with its
+`tier3` extra (`SKILLEVALUATOR_DIR`). The Docker client `proxies` config from step 4 must be in the runner user's
+`~/.docker/config.json`.
+
+```
+python3 -I pipeline/live_pilot.py --dry-run          # the 16 planned runs; nothing starts
+DOCKER_HOST=unix:///run/docker-evals.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \
+TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \
+python3 -I pipeline/live_pilot.py --only obra__superpowers__skills__systematic-debugging   # one skill first
+```
+
+`tier3.py` refuses to start on the main daemon, with a real provider key in its environment, or without a token.
+A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, and one with no comparable
+cases as `inconclusive`. Neither gets a score.
+
 ## Known limits
 - Trial-to-gateway traffic is plain HTTP on the local bridge. The per-run token crosses it, and it is worthless
   once the run is revoked.
