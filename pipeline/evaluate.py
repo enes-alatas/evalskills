@@ -287,6 +287,16 @@ def scanner_crash(rep_path: Path) -> str | None:
     return None
 
 
+def skillspector_deadlines(timeout: int) -> dict[str, str]:
+    """SkillSpector's own deadlines, set inside the scan cap (#112). When they expire, only the Security Scan is
+    incomplete and the rest of the report survives; the cap would lose the whole run. Upstream's defaults (1080 s and
+    1200 s) are above our cap. The scanner sidecar has its own copy; a test keeps the two in step."""
+    return {
+        "SKILLSPECTOR_MAX_WORKFLOW_SECONDS": str(int(timeout * 0.7)),
+        "SKILLEVALUATOR_SKILLSPECTOR_TIMEOUT_SECONDS": str(int(timeout * 0.8)),
+    }
+
+
 def run_tier1(skill_dir: Path, out: Path, llm: bool, on_start=None) -> tuple[int, float, str]:
     """Run Tier 1 on skill_dir. on_start() is called once the scan really begins: at once for a local run, and when
     the scanner claims the job for the sidecar (#103), so a job waiting for the scanner is never shown as running."""
@@ -294,7 +304,7 @@ def run_tier1(skill_dir: Path, out: Path, llm: bool, on_start=None) -> tuple[int
         return run_tier1_sidecar(skill_dir, out, on_start)
     if on_start:
         on_start()
-    env = git_env()
+    env = git_env() | skillspector_deadlines(TIER1_TIMEOUT)
     if llm:
         env.update({k: v for k, v in os.environ.items() if k in PROVIDER_VARS})
     cmd = [UV, "run", "-q", "--python", "3.13", "--extra", "security"]

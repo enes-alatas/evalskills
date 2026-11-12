@@ -18,7 +18,7 @@ import evaluate as ev  # noqa: E402
 import scanner  # noqa: E402
 
 STUB = """#!{python}
-import json, sys, pathlib
+import json, os, sys, pathlib
 if sys.argv[1] == "--version":
     print("skillevaluator 9.9.9-test"); sys.exit(0)
 skill, out = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[sys.argv.index("-o") + 1])
@@ -26,6 +26,8 @@ out.mkdir(parents=True)
 body = {{"skill": skill.name, "files": sorted(p.name for p in skill.iterdir())}}
 (out / "skillevaluator-tier1.json").write_text(json.dumps(body))
 print("scanned", skill.name)
+env = os.environ.get
+print("deadlines", env("SKILLSPECTOR_MAX_WORKFLOW_SECONDS"), env("SKILLEVALUATOR_SKILLSPECTOR_TIMEOUT_SECONDS"))
 """
 
 
@@ -65,6 +67,7 @@ def test_round_trip_copies_the_report_and_cleans_up(exchange):
     code, secs, log = ev.run_tier1_sidecar(skill, out)
     t.join(10)
     assert code == 0 and secs >= 0 and "scanned demo-skill" in log
+    assert "deadlines 420 480" in log  # SkillSpector's own deadlines reach the evaluator, inside the 600 s cap (#112)
     assert json.loads((out / "skillevaluator-tier1.json").read_text()) == {"skill": "demo-skill", "files": ["SKILL.md"]}
     assert list(inbox.iterdir()) == []
     assert [p.name for p in outbox.iterdir()] == [".identity.json"]
@@ -338,3 +341,11 @@ def test_no_scanner_means_no_start(exchange, monkeypatch):
     with pytest.raises(ev.ScannerUnavailable):
         ev.run_tier1_sidecar(skill, tmp, lambda: starts.append(1))
     assert starts == []
+
+
+@pytest.mark.parametrize("timeout", [120, 600, 1200])
+def test_skillspector_deadlines_end_inside_the_cap_and_match(timeout):
+    """SkillSpector's own deadline ends a slow scan before its watchdog, and both before our cap (#112)."""
+    d = scanner.skillspector_deadlines(timeout)
+    assert d == ev.skillspector_deadlines(timeout)
+    assert int(d["SKILLSPECTOR_MAX_WORKFLOW_SECONDS"]) < int(d["SKILLEVALUATOR_SKILLSPECTOR_TIMEOUT_SECONDS"]) < timeout

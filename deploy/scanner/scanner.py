@@ -73,11 +73,27 @@ def kill_group(pgid: int) -> None:
         pass
 
 
+def skillspector_deadlines(timeout: int) -> dict[str, str]:
+    """SkillSpector's own deadlines, set inside the scan cap (#112). When they expire, only the Security Scan is
+    incomplete and the rest of the report survives; the cap would lose the whole run. Upstream's defaults (1080 s and
+    1200 s) are above our cap. pipeline/evaluate.py has its own copy; a test keeps the two in step."""
+    return {
+        "SKILLSPECTOR_MAX_WORKFLOW_SECONDS": str(int(timeout * 0.7)),
+        "SKILLEVALUATOR_SKILLSPECTOR_TIMEOUT_SECONDS": str(int(timeout * 0.8)),
+    }
+
+
 def run_capped(cmd: list[str], cwd: Path) -> tuple[int, str]:
     """Run cmd in its own process group. On timeout the whole group is killed, so a grandchild (SkillSpector,
     gitleaks) can't keep the pipes open and hang us; the watchdog covers one that left the group."""
     p = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=cwd, start_new_session=True
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        start_new_session=True,
+        env={**os.environ, **skillspector_deadlines(TIMEOUT)},
     )
     try:
         out, err = p.communicate(timeout=TIMEOUT)
