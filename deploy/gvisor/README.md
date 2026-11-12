@@ -28,12 +28,18 @@ Steps (as root), in order:
 5. A SkillEvaluator doctor, then one bundled-skill Tier 3 run.
 
 Undo: `systemctl disable --now docker-evals && rm -rf /var/lib/docker-evals /etc/docker-evals`, then remove the
-rules: `iptables -D INPUT -s 172.31.240.0/20 -j EVALS-INPUT`, `iptables -D DOCKER-USER -s 172.31.240.0/20 -j EVALS-EGRESS`,
+rules: `iptables -D INPUT -s 172.31.240.0/20 -j EVALS-INPUT`, `iptables -D FORWARD -s 172.31.240.0/20 -j EVALS-EGRESS`, `iptables -D DOCKER-USER -s 172.31.240.0/20 -j EVALS-EGRESS`,
 and `iptables -F` and `iptables -X` on both chains.
 
 Known uncertainties to check in step 0:
-- Two dockerd instances share the host's iptables (both use the DOCKER-USER chain). Check that the main daemon's rules
-  survive restarts of both.
+- Two dockerd instances share the host's iptables. **This broke the host on 2026-11-12:** starting the eval daemon
+  cut egress for containers on the main daemon (its own address ranges did not overlap, 172.17-26.x). The eval
+  daemon now runs with `"iptables": false`, so it writes no rules at all; `firewall.sh` is the only thing that adds
+  rules for its range, and trials need no NAT (the gateway and proxy are on host addresses). `preflight.sh` also
+  refuses to start it if any host route overlaps 172.31.240.0/20. Before enabling it again, snapshot the rules
+  (`iptables-save > /root/before.rules`), start it, and diff (`iptables-save | diff /root/before.rules -`): only the
+  EVALS-* chains and their three jumps (INPUT, FORWARD, DOCKER-USER) may appear. Isolation between trials comes
+  from EVALS-EGRESS alone: `icc` is enforced by Docker's iptables rules, so the config no longer sets it.
 - `userns-remap` together with runsc, and Harbor's compose features under gVisor, are unverified.
 - No DNS: on a compose network created by the eval daemon, `getent hosts example.com` (or `nslookup`) must fail.
   Docker's embedded resolver (127.0.0.11) forwards from dockerd, possibly from the host's namespace, outside the
@@ -42,7 +48,10 @@ Known uncertainties to check in step 0:
 - No IPv6: a trial has no global IPv6 address. `firewall.sh` is IPv4 only, so an IPv6-enabled trial network would
   leave unfiltered.
 - `ctr namespaces ls` lists `evals` next to `moby`, and the main daemon's `docker ps` is unchanged.
-- The INPUT and DOCKER-USER jumps stay at position 1 after a ufw reload. If not, run `firewall.sh` again; it removes
+- Two containers on one trial network can still reach each other. br_netfilter sends bridged traffic through
+  FORWARD, so EVALS-EGRESS may drop it. If a multi-container trial fails this, add a same-bridge allow
+  (`-m physdev --physdev-is-bridged`) to firewall.sh.
+- The INPUT, FORWARD and DOCKER-USER jumps stay at position 1 after a ufw reload. If not, run `firewall.sh` again; it removes
   its old jumps before inserting new ones.
 - Agent installs: Harbor installs the agent inside every trial at setup (system packages, Node through nvm, then
   `npm i -g opencode-ai`), so trials need the egress proxy. Its hostname allowlist (package mirror, nodejs.org,
