@@ -5,6 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=notify
+# The egress rules go in before every start, so the daemon never runs without them (fail closed). iptables rules
+# are not saved, so this is what restores them after a reboot. dockerd keeps DOCKER-USER's contents on restart.
+EnvironmentFile=-/etc/docker-evals/firewall.env
+ExecStartPre=/bin/sh /etc/docker-evals/firewall.sh
 ExecStartPre=/bin/sh -c 'ip link show br-evals >/dev/null 2>&1 || (ip link add br-evals type bridge && ip addr add 172.31.248.1/24 dev br-evals && ip link set br-evals up)'
 ExecStart=/usr/bin/dockerd --config-file /etc/docker-evals/daemon.json
 Restart=on-failure

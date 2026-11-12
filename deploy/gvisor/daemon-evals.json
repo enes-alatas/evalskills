@@ -4,6 +4,8 @@
   "data-root": "/var/lib/docker-evals",
   "exec-root": "/run/docker-evals",
   "pidfile": "/run/docker-evals.pid",
+  "containerd-namespace": "evals",
+  "containerd-plugins-namespace": "evals-plugins",
   "bridge": "br-evals",
   "default-address-pools": [{"base": "172.31.240.0/21", "size": 28}],
   "runtimes": {"runsc": {"path": "/usr/bin/runsc", "runtimeArgs": ["--platform=systrap", "--network=sandbox"]}},
