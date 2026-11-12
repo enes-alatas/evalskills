@@ -1,0 +1,13 @@
+# The internal live pilot (#121). repo, skill_path, category, task_set ('-' = the skill's own cases), repeats.
+# Three categories run on each skill's own cases (self-reported, not comparable across skills); testing-debugging
+# runs on the vendored QuixBugs set, so those three are comparable with each other. Three skills repeat 3 times.
+obra/superpowers	skills/systematic-debugging	testing-debugging	quixbugs-python	3
+addyosmani/agent-skills	skills/debugging-and-error-recovery	testing-debugging	quixbugs-python	1
+obra/superpowers	skills/test-driven-development	testing-debugging	quixbugs-python	1
+openai/skills	skills/.curated/pdf	documents	-	1
+anthropics/skills	skills/xlsx	documents	-	1
+addyosmani/agent-skills	skills/code-review-and-quality	code-review	-	3
+obra/superpowers	skills/requesting-code-review	code-review	-	1
+anthropics/skills	skills/frontend-design	frontend	-	3
+vercel-labs/agent-skills	skills/react-best-practices	frontend	-	1
+addyosmani/agent-skills	skills/frontend-ui-engineering	frontend	-	1

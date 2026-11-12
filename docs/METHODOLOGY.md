@@ -64,7 +64,8 @@ skills, even within a category. When live results are added, they will show whic
 
 A skill doesn't grade itself. Before a run, any grader, grading config, native Harbor task or custom trial
 environment it ships is removed, and SkillEvaluator's default judge scores its cases. Because the author still wrote
-the cases, such a result is labelled **self-reported**.
+the cases, such a result is labelled **self-reported**. A run on SkillEvaluator's starter case, because the skill
+ships no cases, is labelled **starter**.
 
 We don't write our own benchmark tasks. Cross-skill comparison would need a shared task set vendored from a
 public benchmark, with its source and licence recorded. The first is a pilot for testing-debugging: six

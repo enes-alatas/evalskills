@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -30,6 +31,8 @@ TIER3_TIMEOUT = int(os.environ.get("TIER3_TIMEOUT", "3600"))
 AGENT = os.environ.get("TIER3_AGENT", "opencode")  # nv_build default agent
 ENV_MODE = os.environ.get("TIER3_ENV_MODE", "docker")  # never "local" for untrusted skills
 N_ATTEMPTS = os.environ.get("TIER3_N_ATTEMPTS", "1")
+# The agent's model, as the gateway lists it. OpenCode's "openai/" prefix picks its OpenAI-compatible adapter.
+AGENT_MODEL = os.environ.get("TIER3_AGENT_MODEL", "")
 EVALS_SOCKET = "unix:///run/docker-evals.sock"  # the gVisor daemon (ADR-0003, deploy/gvisor/)
 REAL_KEYS = ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "OPENAI_API_KEY", "SKILL_EVAL_LLM_API_KEY")
 
@@ -80,6 +83,14 @@ def trial_env(environ=os.environ) -> dict:
 OWN_EVALS_STRIPPED = ("grader.py", "grader.sh", "tests", "harbor", "config.yml", "config.yaml", "environment")
 CASES_OWN = "self-reported"  # the skill's own cases, default judge
 CASES_SHARED = "shared"  # a vendored public set
+CASES_STARTER = "starter"  # no evals/: SkillEvaluator prepares its starter case
+
+
+def cases_label(skill: Path, task_set: str | None) -> str:
+    if task_set:
+        return CASES_SHARED
+    evals = skill / "evals"
+    return CASES_OWN if evals.is_dir() and any(evals.iterdir()) else CASES_STARTER
 
 
 def strip_own_grading(evals: Path) -> list[str]:
@@ -154,38 +165,69 @@ def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
         commit,
         "--results-dir",
         str(out),
-    ]
+    ] + (["--agent-model", f"{AGENT}=openai/{AGENT_MODEL}"] if AGENT_MODEL else [])
+
+
+def _text(b: str | bytes | None) -> str:
+    """TimeoutExpired can carry bytes even with text=True; decode so run.log stays readable."""
+    return b.decode(errors="replace") if isinstance(b, bytes) else (b or "")
+
+
+def run(repo: str, skill_path: str, task_set: str | None, env: dict, ref: str | None = None) -> dict:
+    """One live evaluation. Returns its exit code, cases, report dir, commit and tree digest; never a score."""
+    with ev.GIT_LOCK:
+        repo_dir, commit = ev.checkout(repo, ref)
+    tmp = Path(tempfile.mkdtemp(prefix="t3-"))
+    try:
+        skill = prepare(repo_dir / skill_path, task_set, tmp / Path(skill_path).name)
+        cases = cases_label(skill, task_set)
+        out = (
+            ev.REPORTS
+            / f"{repo.replace('/', '__')}__{skill_path.replace('/', '__')}"
+            / f"{commit[:12]}-tier3-{task_set or 'own'}-{time.strftime('%Y%m%dT%H%M%S')}"
+        )
+        out.mkdir(parents=True, exist_ok=True)
+        cmd = command(skill, out, repo, commit)
+        started = time.monotonic()
+        try:
+            p = subprocess.run(
+                cmd, cwd=ev.EVALUATOR_DIR, env=env, capture_output=True, text=True, timeout=TIER3_TIMEOUT
+            )
+            code, log = p.returncode, p.stdout + "\n--- stderr ---\n" + p.stderr
+        except subprocess.TimeoutExpired as e:
+            code, log = None, f"timed out after {TIER3_TIMEOUT} s\n{_text(e.stdout)}\n--- stderr ---\n{_text(e.stderr)}"
+        (out / "run.log").write_text(log if isinstance(log, str) else str(log))
+        (out / "cases.json").write_text(json.dumps({"cases": cases, "task_set": task_set}))
+        return {
+            "exit": code,
+            "cases": cases,
+            "out": out,
+            "commit": commit,
+            "tree_digest": ev.tree_digest(repo_dir / skill_path),
+            "duration_s": round(time.monotonic() - started, 1),
+        }
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     repo, skill_path = args[0], args[1]
     task_set = args[2] if len(args) > 2 else None
-    dry = "--dry-run" in sys.argv
-    env = None if dry else trial_env()  # refuse unsafe setups before cloning or spending anything
-    with ev.GIT_LOCK:
-        repo_dir, commit = ev.checkout(repo)
-    tmp = Path(tempfile.mkdtemp(prefix="t3-"))
-    try:
-        skill = prepare(repo_dir / skill_path, task_set, tmp / Path(skill_path).name)
-        cases = CASES_SHARED if task_set else CASES_OWN
-        out = (
-            ev.REPORTS
-            / f"{repo.replace('/', '__')}__{skill_path.replace('/', '__')}"
-            / f"{commit[:12]}-tier3-{task_set or 'own'}"
-        )
-        cmd = command(skill, out, repo, commit)
-        if dry:
+    if "--dry-run" in sys.argv:
+        with ev.GIT_LOCK:
+            repo_dir, commit = ev.checkout(repo)
+        tmp = Path(tempfile.mkdtemp(prefix="t3-"))
+        try:
+            skill = prepare(repo_dir / skill_path, task_set, tmp / Path(skill_path).name)
             evals = sorted(p.name for p in (skill / "evals").iterdir()) if (skill / "evals").is_dir() else []
-            print(json.dumps({"cmd": cmd, "cases": cases, "evals": evals}, indent=1))
-            return
-        out.mkdir(parents=True, exist_ok=True)
-        p = subprocess.run(cmd, cwd=ev.EVALUATOR_DIR, env=env, capture_output=True, text=True, timeout=TIER3_TIMEOUT)
-        (out / "run.log").write_text(p.stdout + "\n--- stderr ---\n" + p.stderr)
-        (out / "cases.json").write_text(json.dumps({"cases": cases, "task_set": task_set}))
-        print(json.dumps({"exit": p.returncode, "cases": cases, "out": str(out)}))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+            cmd = command(skill, tmp / "out", repo, commit)
+            print(json.dumps({"cmd": cmd, "cases": cases_label(skill, task_set), "evals": evals}, indent=1))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        return
+    res = run(repo, skill_path, task_set, trial_env())  # trial_env refuses unsafe setups before anything runs
+    print(json.dumps({**res, "out": str(res["out"])}))
 
 
 if __name__ == "__main__":
