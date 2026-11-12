@@ -84,6 +84,8 @@ def scan(image: str, skill: Path, reports: Path) -> tuple[int, float]:
         "--mount", f"type=bind,src={reports},dst=/reports", "-w", "/tmp", "--entrypoint", "skillevaluator", image,
         "tier1", f"/scan/{skill.name}", "--no-llm", "-r", "json", "-o", "/reports",
     ]  # fmt: skip
+    deadlines = [x for k, v in ev.skillspector_deadlines(ev.TIER1_TIMEOUT).items() for x in ("-e", f"{k}={v}")]
+    cmd[cmd.index("--mount") : cmd.index("--mount")] = deadlines  # the sidecar's SkillSpector deadlines (#112)
     t0 = time.monotonic()
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=ev.TIER1_TIMEOUT)
     return p.returncode, round(time.monotonic() - t0, 1)
