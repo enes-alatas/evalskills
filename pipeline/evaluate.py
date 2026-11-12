@@ -29,7 +29,7 @@ REPORTS = ROOT / "reports"
 SEED_RESULTS = ROOT / "catalog" / "results.jsonl"
 RESULTS = Path(os.environ.get("RESULTS_PATH", str(SEED_RESULTS)))
 UV = shutil.which("uv") or str(Path.home() / ".local/bin/uv")
-TIER1_TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "600"))
+TIER1_TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "900"))
 # Deployed (#65): the app runs no evaluator. It hands each skill to the scanner sidecar through two volumes
 # (deploy/scanner/scanner.py describes the protocol). Unset, as on a dev machine, Tier 1 runs as a local subprocess.
 SCANNER_IN = os.environ.get("SCANNER_IN")

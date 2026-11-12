@@ -10,7 +10,7 @@ The design is in `docs/ARCHITECTURE.md` and its ADRs. This file lists what the h
   `docker version --format '{{.Server.Version}}'`.
 - Egress: github.com, objects.githubusercontent.com, pypi.org, files.pythonhosted.org.
 - No provider credentials on the app container.
-- Guards already in the app: a 300 MB repo cap, shallow clones with symlinks off, scans on a snapshot copy, a 600 s
+- Guards already in the app: a 300 MB repo cap, shallow clones with symlinks off, scans on a snapshot copy, a 900 s
   timeout, submission and lookup rate limits, and a queue cap.
 
 ## Live release (adds zones B and C)

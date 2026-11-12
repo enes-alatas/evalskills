@@ -57,7 +57,7 @@ services:
     restart: always
     network_mode: none
     environment:
-      TIER1_TIMEOUT: "600"
+      TIER1_TIMEOUT: "${TIER1_TIMEOUT:-900}"  # from .env, as the app reads it: both must agree on the cap
       TMPDIR: /tmp
     user: "10001:10001"
     read_only: true

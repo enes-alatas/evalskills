@@ -67,7 +67,7 @@ def test_round_trip_copies_the_report_and_cleans_up(exchange):
     code, secs, log = ev.run_tier1_sidecar(skill, out)
     t.join(10)
     assert code == 0 and secs >= 0 and "scanned demo-skill" in log
-    assert "deadlines 420 480" in log  # SkillSpector's own deadlines reach the evaluator, inside the 600 s cap (#112)
+    assert "deadlines 630 720" in log  # SkillSpector's own deadlines reach the evaluator, inside the 900 s cap (#112)
     assert json.loads((out / "skillevaluator-tier1.json").read_text()) == {"skill": "demo-skill", "files": ["SKILL.md"]}
     assert list(inbox.iterdir()) == []
     assert [p.name for p in outbox.iterdir()] == [".identity.json"]
@@ -343,7 +343,7 @@ def test_no_scanner_means_no_start(exchange, monkeypatch):
     assert starts == []
 
 
-@pytest.mark.parametrize("timeout", [120, 600, 1200])
+@pytest.mark.parametrize("timeout", [120, 600, 900, 1200])
 def test_skillspector_deadlines_end_inside_the_cap_and_match(timeout):
     """SkillSpector's own deadline ends a slow scan before its watchdog, and both before our cap (#112)."""
     d = scanner.skillspector_deadlines(timeout)
