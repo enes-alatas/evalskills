@@ -8,6 +8,7 @@ pipeline/evaluate.py
 # Live evaluation: sandbox, model gateway, budgets.
 pipeline/tier3.py
 deploy/*
+gateway/*
 # What is published: the report sanitizer and the public catalog export.
 pipeline/export_catalog.py
 # What runs with the repo's token, and the guards themselves.
