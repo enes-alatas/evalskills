@@ -25,13 +25,16 @@ jump() {
 }
 
 # hold / release: while the chains are rebuilt on a rerun, trial traffic is dropped, never let through an empty chain
-hold() { for c in INPUT DOCKER-USER; do iptables -I "$c" 1 -s "$SCOPE" -j DROP; done; }
-release() { for c in INPUT DOCKER-USER; do while iptables -D "$c" -s "$SCOPE" -j DROP 2>/dev/null; do :; done; done; }
+hold() { for c in INPUT FORWARD DOCKER-USER; do iptables -I "$c" 1 -s "$SCOPE" -j DROP; done; }
+release() { for c in INPUT FORWARD DOCKER-USER; do while iptables -D "$c" -s "$SCOPE" -j DROP 2>/dev/null; do :; done; done; }
 
 iptables -N DOCKER-USER 2>/dev/null || true  # dockerd keeps an existing DOCKER-USER chain and jumps to it
 hold
 fill EVALS-EGRESS  # routed traffic: other hosts, the internet, the main Docker networks
 fill EVALS-INPUT   # traffic to the host itself
+# Our own FORWARD jump: the eval daemon runs with iptables off (#135), so egress control must not depend on the main
+# daemon's FORWARD -> DOCKER-USER jump being there. DOCKER-USER stays as a second path in case FORWARD is reordered.
+jump FORWARD EVALS-EGRESS
 jump DOCKER-USER EVALS-EGRESS
 # The test in tests/test_deploy_config.py reads the scope from this line: -s 172.31.240.0/20 -j EVALS-EGRESS
 jump INPUT EVALS-INPUT

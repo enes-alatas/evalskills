@@ -33,7 +33,7 @@ def run_firewall(tmp_path, existing=0, **env):
     stub.chmod(0o755)
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
-    for parent, target in (("INPUT", "EVALS-INPUT"), ("DOCKER-USER", "EVALS-EGRESS")):
+    for parent, target in (("INPUT", "EVALS-INPUT"), ("FORWARD", "EVALS-EGRESS"), ("DOCKER-USER", "EVALS-EGRESS")):
         (state / f"{parent}_{SCOPE.replace('/', '_')}_{target}").write_text(str(existing))  # jumps left by earlier runs
     log = tmp_path / "iptables.log"
     log.write_text("")
@@ -74,24 +74,25 @@ def test_jumps_come_first_so_no_earlier_accept_wins(tmp_path):
     calls, _ = run_firewall(tmp_path)
     assert f"-I INPUT 1 -s {SCOPE} -j EVALS-INPUT" in calls
     assert f"-I DOCKER-USER 1 -s {SCOPE} -j EVALS-EGRESS" in calls
-    assert not [c for c in calls if c.startswith("-A INPUT") or c.startswith("-A DOCKER-USER")]
+    assert f"-I FORWARD 1 -s {SCOPE} -j EVALS-EGRESS" in calls  # #136: not only via the main daemon's DOCKER-USER
+    assert not [c for c in calls if c.startswith(("-A INPUT", "-A FORWARD", "-A DOCKER-USER"))]
 
 
 def jumps(rules):
     s = SCOPE.replace("/", "_")
-    return rules[f"INPUT_{s}_EVALS-INPUT"], rules[f"DOCKER-USER_{s}_EVALS-EGRESS"]
+    return rules[f"INPUT_{s}_EVALS-INPUT"], rules[f"FORWARD_{s}_EVALS-EGRESS"], rules[f"DOCKER-USER_{s}_EVALS-EGRESS"]
 
 
 def test_a_rerun_replaces_old_jumps_with_exactly_one(tmp_path):
     calls, rules = run_firewall(tmp_path, existing=2)
-    assert jumps(rules) == (1, 1)
+    assert jumps(rules) == (1, 1, 1)
     assert sum(c == f"-D INPUT -s {SCOPE} -j EVALS-INPUT" for c in calls) == 3  # two removed, then the miss
 
 
 def test_a_rerun_holds_trial_traffic_closed_while_rebuilding(tmp_path):
     calls, rules = run_firewall(tmp_path, existing=1)
     s = SCOPE.replace("/", "_")
-    assert rules[f"INPUT_{s}_DROP"] == rules[f"DOCKER-USER_{s}_DROP"] == 0  # the hold is gone afterwards
+    assert [rules[f"{c}_{s}_DROP"] for c in ("INPUT", "FORWARD", "DOCKER-USER")] == [0, 0, 0]  # the hold is gone
     hold = calls.index(f"-I INPUT 1 -s {SCOPE} -j DROP")
     flush = next(i for i, c in enumerate(calls) if c.startswith("-F EVALS-") or c.startswith("-N EVALS-"))
     release = calls.index(f"-D INPUT -s {SCOPE} -j DROP")
@@ -144,3 +145,10 @@ def test_install_stops_when_apt_fails():
     text = (GVISOR / "install.sh").read_text()
     assert "apt-get update &&" not in text
     assert 'id -u)" = 0' in text and "preflight.sh" in text
+
+
+def test_eval_daemon_writes_no_iptables_rules():
+    """Step-0 incident: the second dockerd rewrote shared chains and cut the main daemon's egress."""
+    cfg = json.loads((GVISOR / "daemon-evals.json").read_text())
+    assert cfg["iptables"] is False and cfg["ip6tables"] is False and cfg["ipv6"] is False
+    assert "icc" not in cfg  # enforced through Docker's iptables rules, so a no-op here; nobody should count on it
