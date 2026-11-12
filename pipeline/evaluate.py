@@ -705,6 +705,21 @@ def resummarize() -> int:
     return n
 
 
+class PilotRecord(ValueError):
+    pass
+
+
+def is_pilot(rec: dict) -> bool:
+    """A live (Tier 3) record. The trial key's pilot results never reach the public build or the board (ADR-0007)."""
+    return rec.get("mode") == "tier3" or bool(rec.get("pilot"))
+
+
+def refuse_pilot(records: list[dict], where: str) -> None:
+    bad = [r.get("id", "?") for r in records if is_pilot(r)]
+    if bad:
+        raise PilotRecord(f"{where} holds {len(bad)} live pilot record(s), e.g. {bad[0]} (ADR-0007)")
+
+
 def load_results() -> list[dict]:
     if not RESULTS.exists():
         return []

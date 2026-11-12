@@ -612,6 +612,10 @@ def bootstrap():
 
     if ev.RESULTS != ev.SEED_RESULTS and ev.SEED_RESULTS.exists():
         ev.RESULTS.parent.mkdir(parents=True, exist_ok=True)
+        ev.refuse_pilot(  # the shipped catalog never holds a pilot result (ADR-0007); refuse to start with one
+            [json.loads(line) for line in ev.SEED_RESULTS.read_text().splitlines() if line.strip()],
+            str(ev.SEED_RESULTS),
+        )
         if not ev.RESULTS.exists():
             shutil.copy(ev.SEED_RESULTS, ev.RESULTS)
         else:
