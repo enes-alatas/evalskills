@@ -1,0 +1,14 @@
+{
+  "listen_host": "172.31.248.1",
+  "listen_port": 8443,
+  "upstream_base_url": "https://integrate.api.nvidia.com/v1",
+  "key_file": "/run/secrets/model_key",
+  "state_db": "/var/lib/evalskills-gateway/state.db",
+  "allowed_models": ["nvidia/nemotron-3-super-120b-a12b"],
+  "per_run_requests": 400,
+  "per_run_tokens": 2000000,
+  "per_day_requests": 2000,
+  "requests_per_minute": 30,
+  "max_rate_wait_s": 120,
+  "upstream_timeout_s": 300
+}
