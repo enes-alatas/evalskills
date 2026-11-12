@@ -116,5 +116,31 @@ def test_no_dns_rule(tmp_path):
 def test_unit_applies_the_rules_before_every_start():
     unit = (GVISOR / "docker-evals.service").read_text()
     pre = [line for line in unit.splitlines() if line.startswith("ExecStartPre=")]
-    assert pre and "firewall.sh" in pre[0]  # first, so the daemon never runs without the rules
+    # preflight first (it changes nothing), then the rules, before the bridge and dockerd: never run without them
+    assert len(pre) >= 2 and "preflight.sh" in pre[0] and "firewall.sh" in pre[1]
     assert "EnvironmentFile=-/etc/docker-evals/firewall.env" in unit
+
+
+ROUTES_CLASH = "default via 192.0.2.1 dev eth0\n172.31.0.0/16 dev br-main proto kernel\n172.31.248.0/24 dev br-evals\n"
+ROUTES_OK = "default via 192.0.2.1 dev eth0\n172.17.0.0/16 dev docker0\n172.31.248.0/24 dev br-evals proto kernel\n"
+
+
+@pytest.mark.parametrize(("routes", "code"), [(ROUTES_CLASH, 1), (ROUTES_OK, 0)])
+def test_preflight_refuses_a_range_that_overlaps_host_routes(tmp_path, routes, code):
+    """Step-0 incident: the eval daemon must not start where its range overlaps another network on the host."""
+    fake = {"ip": f"cat <<'R'\n{routes}R", "id": "echo 0", "runsc": "true"}
+    for name, body in fake.items():
+        (tmp_path / name).write_text(f"#!/bin/sh\n{body}\n")
+        (tmp_path / name).chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    p = subprocess.run(["sh", str(GVISOR / "preflight.sh")], env=env, capture_output=True, text=True)
+    assert p.returncode == code, p.stderr
+    if code:
+        assert "172.31.0.0/16" in p.stderr
+
+
+def test_install_stops_when_apt_fails():
+    """Under set -e, a failure inside `a && b` does not stop the script: update and install must be separate."""
+    text = (GVISOR / "install.sh").read_text()
+    assert "apt-get update &&" not in text
+    assert 'id -u)" = 0' in text and "preflight.sh" in text
