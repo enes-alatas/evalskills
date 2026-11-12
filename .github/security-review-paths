@@ -9,6 +9,7 @@ pipeline/evaluate.py
 pipeline/tier3.py
 deploy/*
 gateway/*
+gvisor_env/*
 # What is published: the report sanitizer and the public catalog export.
 pipeline/export_catalog.py
 # What runs with the repo's token, and the guards themselves.

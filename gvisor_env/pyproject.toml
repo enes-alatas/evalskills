@@ -1,0 +1,15 @@
+[project]
+name = "evalskills-gvisor"
+version = "0.1.0"
+description = "SkillEvaluator --env-mode gvisor: the hardened Docker backend with every trial container under runsc"
+requires-python = ">=3.11"
+
+[project.entry-points."skillevaluator.env_modes"]
+gvisor = "evalskills_gvisor:SPEC"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["evalskills_gvisor"]
