@@ -1,0 +1,21 @@
+# Throwaway proof for #112. Not for merge.
+name: diag-deadlines
+on:
+  pull_request:
+    paths: ["scripts/diag_deadlines.py", ".github/workflows/diag-deadlines.yml"]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          mkdir -p "$RUNNER_TEMP/anon"
+          docker --config "$RUNNER_TEMP/anon" pull -q "$IMAGE"
+          python3 -I scripts/diag_deadlines.py "$IMAGE"
