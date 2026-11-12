@@ -11,5 +11,8 @@ groupadd -f docker-evals
 install -d -m 0755 /etc/docker-evals /var/lib/docker-evals
 install -m 0644 daemon-evals.json /etc/docker-evals/daemon.json
 install -m 0644 docker-evals.service /etc/systemd/system/docker-evals.service
+install -m 0755 firewall.sh /etc/docker-evals/firewall.sh
+[ -e /etc/docker-evals/firewall.env ] || install -m 0644 firewall.env /etc/docker-evals/firewall.env
 systemctl daemon-reload
-echo "Review /etc/docker-evals/daemon.json, then: systemctl enable --now docker-evals && sh firewall.sh"
+echo "Review /etc/docker-evals/daemon.json and firewall.env, then:"
+echo "  systemctl enable --now docker-evals   # applies firewall.sh before every start"
