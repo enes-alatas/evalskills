@@ -73,8 +73,10 @@ visitor as the proxy and they all share one rate-limit bucket.
 ## Current scope
 
 Only static Tier 1 runs live. It reads the skill and runs no skill code. Live Tier 3 (the agent runs each task with
-and without the skill) is blocked on two things: a model-provider key, and the isolated eval sandbox (a dedicated
-Docker daemon with gVisor, egress limited to a model gateway). See ADR-0003 in `docs/adr/`. Until then, live
+and without the skill) needs three things: the isolated eval sandbox (a dedicated Docker daemon with gVisor, egress
+limited to a model gateway, ADR-0003), a model-provider key, and a model budget or an LLM sponsor. NVIDIA Build's
+free trial key may only be used for internal testing and evaluation, so it backs an internal pilot (#121) and no
+public result of any kind (ADR-0007). What a funded tier would cost: `docs/SPONSORSHIP.md`. Until then, live
 performance shows as "not run" and is never estimated.
 
 ## Deploy (static only)

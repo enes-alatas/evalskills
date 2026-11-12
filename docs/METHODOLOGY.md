@@ -42,8 +42,18 @@ never combines them into a single number.
 ## 3. Live performance (Tier 3), not yet available
 
 Tier 3 runs an agent on test cases with the skill and without it (the baseline) and reports Skill Lift. This
-deployment can't run it yet because it has no model-provider credential and no isolated sandbox. The leaderboard
-shows "not run" for every skill. It never shows an estimate.
+deployment can't run it publicly yet. The isolated sandbox is not installed, and a public live tier needs a model
+budget or an LLM sponsor (ADR-0007). The leaderboard shows "not run" for every skill. It never shows an estimate.
+
+Why a free key is not enough: NVIDIA Build's free key comes under the NVIDIA API Trial Terms of Service, which allow
+internal testing and evaluation only, not production, and not making the service or its output available to
+others. So no public result of any kind comes from that key: not live trials, not the LLM stage of the security
+scan, not embeddings. It backs one internal pilot (#121), whose records stay private. The experiment log publishes
+only per-skill measurements from it (runtime, requests, tokens, lift, spread between runs).
+
+A funded tier would keep one fixed agent and model per live column, so its scores are comparable only within that
+column. Models are never mixed into one score. The sponsor is named next to every result it paid for, and has no
+say over which skills run or how they are scored. Costs and terms: `docs/SPONSORSHIP.md`.
 
 Live runs use SkillEvaluator's own content for each skill (ADR-0006): the test cases the skill publishes in its
 `evals/`, or the starter case SkillEvaluator prepares when it has none. Every skill is therefore tested on
