@@ -38,8 +38,8 @@ cost = skills × repeats × ( arms × (agent input tokens × input price + agent
   Prices are per million tokens.
 
 Token counts measured on one model don't carry over to another: tokenizers, step counts and caching differ. A
-sponsor's estimate therefore needs a few runs on their model first. Nemotron's weights are open, so a paid Nemotron
-host can use the pilot's measurements directly.
+sponsor's estimate therefore needs a few runs on their model first. The pilot runs on an open model, so it shows how many
+cases and calls a skill takes, not what a frontier model would spend.
 
 ## Candidate models
 
@@ -47,8 +47,10 @@ Prices are list prices, each with its source and the date it was checked. A row 
 
 | Model | Agent (SkillEvaluator default) | Provider | Input $/M | Output $/M | Source, checked | Catalog total |
 | --- | --- | --- | --- | --- | --- | --- |
-| Nemotron 3 Super 120B (`nvidia/nemotron-3-super-120b-a12b`) | OpenCode | a paid Nemotron host | not yet checked | not yet checked | - | pending E12 measurements |
-| Claude Sonnet 5.5 (`claude-sonnet-5-5`) | Claude Code | Anthropic | not yet checked | not yet checked | [anthropic.com/pricing](https://www.anthropic.com/pricing) | pending E12 measurements |
-| GPT-5.4 mini (`gpt-5.4-mini`) | Codex | OpenAI | not yet checked | not yet checked | [openai.com/api/pricing](https://openai.com/api/pricing/) | pending E12 measurements |
+| Claude Opus 5.5 (`claude-opus-5-5`) | Claude Code | Anthropic | not yet checked | not yet checked | [anthropic.com/pricing](https://www.anthropic.com/pricing) | pending E12 measurements |
+| GPT-6.1 Sol (`gpt-6.1-sol`) | Codex | OpenAI | not yet checked | not yet checked | [openai.com/api/pricing](https://openai.com/api/pricing/) | pending E12 measurements |
+
+Only frontier models are listed (Enes, 2026-11-12): a public live column should show how a skill does with the
+models people use. Both are SkillEvaluator's provider defaults, each with its native agent.
 
 Rows are added when a sponsor offers a model. A total is filled in only from E12's measurements and a checked price.
