@@ -102,6 +102,9 @@ way is checked in the experiment log (E10).
 * Limits: repositories up to 300 MB. The size is checked with the GitHub API before cloning, and again on disk after
   cloning, where the shallow checkout including `.git` counts, so the effective limit is slightly stricter than the
   API's figure. When the API can't give the size, the lookup is refused rather than cloned. Also: 10 skills per
-  submission, 20 submissions and 30 lookups per client per hour, 100 queued jobs, and a 600 s timeout per evaluation.
+  submission, 20 submissions and 30 lookups per client per hour, 100 queued jobs, and a 900 s timeout per evaluation.
+  Inside it, SkillSpector's own deadlines (630 s, then a 720 s watchdog) end a slow security scan first. The report
+  is kept, with Security Scan `incomplete`, but a scan cut short can show fewer distinct risks than a full one. About
+  1% of the catalog needs that long (#112).
 * Cloned repositories are deleted after 6 hours without use, and at most 40 are kept (least recently used go first).
   A clone that a queued or running job needs is never deleted. After a deletion, a submission needs a fresh lookup.

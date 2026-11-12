@@ -27,7 +27,7 @@ from pathlib import Path
 INBOX = Path(os.environ.get("SCANNER_IN", "/scan/in"))
 OUTBOX = Path(os.environ.get("SCANNER_OUT", "/scan/out"))
 IMAGE = os.environ.get("SCANNER_IMAGE", "")
-TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "600"))
+TIMEOUT = int(os.environ.get("TIER1_TIMEOUT", "900"))
 POLL_S = float(os.environ.get("SCANNER_POLL_S", "2"))
 EVALUATOR = os.environ.get("SKILLEVALUATOR_BIN", "skillevaluator")
 LOG_TAIL = 20_000
