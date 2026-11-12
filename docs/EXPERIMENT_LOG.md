@@ -156,9 +156,9 @@
   the engine: it named the scanned folder differently from the catalog run. Fixed before this run.
 - **Security changed for 51 skills, all from scanners that now run:**
   - SkillSpector (Security Scan) ran on the 30 skills that never had it: 16 `failed` with findings, 9 `passed`, and
-    5 still `incomplete`. Those 5 are SkillSpector's own "partial analysis": SKILL.md references files outside the
-    skill folder, which a folder snapshot doesn't have (`reference_missing`). That's an evaluation-environment limit,
-    not the skill's fault.
+    5 still `incomplete`. Those 5 are SkillSpector's own "partial analysis" (`reference_missing`): it couldn't
+    resolve files or URLs that SKILL.md mentions. As in E1, these are mostly mentions in prose, not files the skill
+    ships (see the correction below). That's a tool artifact, not the skill's fault.
   - semgrep (Code Risk Analysis) now runs. 3 skills newly `fail`, on real findings: `shell=True` in webapp-testing
     (anthropics and its ComposioHQ copy) and `child_process.exec` in obra `brainstorming`. 6 come back `incomplete`
     with semgrep as the incomplete scanner, the parse-error case from #102. One (nuwa-skill) goes `failed` →
@@ -170,7 +170,20 @@
   medium or high finding where they showed none or a lower one.
 - -> The board now has one engine with full scanner coverage, so security results are comparable across the
   catalog. Structural scores were unaffected. `incomplete` is still common: 132/166 pills. In all 132, SkillSpector
-  reported partial analysis, whether the check failed or not. 118 of those cite references to files outside the
-  skill folder (`reference_missing`), 42 a parse limit and 2 a timeout; a skill can cite more than one. It is shown
-  as such, never as a pass. Scanning the whole repository instead of the folder would close most of the first
-  group; that's a possible follow-up, not part of this change.
+  reported partial analysis, whether the check failed or not. 118 of those cite unresolved references
+  (`reference_missing`), 42 a parse limit and 2 a timeout; a skill can cite more than one. It is shown as such,
+  never as a pass.
+- **Correction (2026-11-12):** this entry first said the unresolved references were files outside the skill folder,
+  and that scanning the whole repository would fix most of them. A check of every cited line, in the 117 skills
+  whose reports list one, at their recorded commits, says otherwise. SkillSpector names up to three per check, so
+  this covers 267 lines:
+  - 154 name a file in backticks and 95 are other prose: `firebase.json`, "proposal.pdf",
+    "2024-10-17-meeting-notes.md". These are mostly files in the user's project, or examples, not files the skill
+    ships. 4 of the backtick ones are paths to sibling skills, in 3 NVIDIA doca skills (`doca-setup/SKILL.md`).
+  - 9 contain a web URL or a link-like `(URL)` placeholder (7 are real URLs), which a no-network scan can't
+    resolve.
+  - 5 are links outside the skill folder, in 3 skills (2 trailofbits plugins, 1 openai).
+  - 4 are links inside it.
+  So a repository-wide scan would change at most 6 skills: the 3 with links outside the folder, and the 3 NVIDIA
+  skills if SkillSpector resolves sibling paths that way, which is untested. The cause is SkillSpector's reference resolver treating mentions
+  as references, the E1 finding. It's upstream behaviour, not our snapshot.
