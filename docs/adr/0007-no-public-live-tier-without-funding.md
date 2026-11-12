@@ -60,3 +60,7 @@ charges per token. Today every public record is static (`tier1-static`, no LLM).
 - Where they appear, E12 only or also on the board as labelled pilot results, is decided on #130. Until then,
   decision 2's guard stands: the public build rejects any `mode: tier3` record.
 - The README and METHODOLOGY §3 say this, in place of "no public result of any kind".
+
+**Amendment (2026-11-12, #132):** the open question above is answered. Decided by Enes, 2026-11-12, by direct
+message. The pilot's published results appear in `docs/EXPERIMENT_LOG.md` (E12) only. The board shows none of them,
+and decision 2's guard stays: the public build rejects any `mode: tier3` record. Revisit later.
