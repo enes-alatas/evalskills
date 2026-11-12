@@ -3,6 +3,12 @@
 # install.sh runs it, and docker-evals.service runs it before every start.
 set -eu
 SCOPE=172.31.240.0/20
+# Two dockerds on one host share its network namespace: on 2026-11-12 starting this one took down the main
+# daemon's networks twice (shared iptables chains, then docker0 deleted; #137). Never alongside another dockerd.
+if [ -S "${MAIN_DOCKER_SOCK:-/var/run/docker.sock}" ] || pgrep -x dockerd >/dev/null 2>&1; then
+  echo "preflight: another dockerd is running on this host; refusing (#137)" >&2
+  exit 1
+fi
 [ "$(id -u)" = 0 ] || { echo "preflight: run as root" >&2; exit 1; }
 command -v runsc >/dev/null || [ -x /usr/bin/runsc ] || { echo "preflight: runsc is not installed" >&2; exit 1; }
 # Any host route that overlaps the eval range, other than br-evals itself, belongs to something else on this host

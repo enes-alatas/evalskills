@@ -1,6 +1,12 @@
 #!/bin/sh
 # DRAFT — review first. Installs runsc and a second, isolated Docker daemon for evals.
 set -eu
+# WITHDRAWN (#137): a second dockerd broke the main daemon's networks twice on the shared host. Do not install it
+# on any host that runs another dockerd. The replacement design (runsc on the main daemon) is agreed in #137 first.
+if [ -S "${MAIN_DOCKER_SOCK:-/var/run/docker.sock}" ] || pgrep -x dockerd >/dev/null 2>&1; then
+  echo "install.sh: another dockerd is running on this host; the second eval daemon is withdrawn (#137)" >&2
+  exit 1
+fi
 [ "$(id -u)" = 0 ] || { echo "install.sh: run as root (sudo sh install.sh)" >&2; exit 1; }
 # 1. gVisor from the official apt repo (https://gvisor.dev/docs/user_guide/install/)
 curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
