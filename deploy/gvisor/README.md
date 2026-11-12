@@ -1,4 +1,18 @@
-# Eval sandbox on the shared VPS: dedicated Docker daemon + gVisor (DRAFT, review before running)
+# Eval sandbox on the shared VPS: dedicated Docker daemon + gVisor (WITHDRAWN, see #137)
+
+> **Do not run any of this on a host with another dockerd.** On 2026-11-12, starting this second daemon took the
+> main daemon's networks down twice: first through shared iptables chains, then, with iptables off, by deleting
+> `docker0`. Two dockerds in one network namespace aren't safe, whatever the config. `install.sh` and `preflight.sh`
+> now refuse when another dockerd is running. The replacement (runsc as a runtime on the main daemon, trials on
+> `--internal` networks) is being designed in #137, and nothing goes on the host until that design is agreed.
+>
+> **Clean-up on a host where it was installed** (one announced step, by the host's operator, as root):
+> 1. `docker compose -f deploy/live/compose.yaml down`. The gateway and proxy listen on `br-evals`.
+> 2. `sh deploy/gvisor/uninstall.sh`: a dry run that lists everything it will touch. Then `sh deploy/gvisor/uninstall.sh --yes`.
+>    It removes the unit, the EVALS rules (only those scoped to 172.31.240.0/20), `br-evals`, the eval daemon's
+>    directories and its group. It reports `dockremap` but doesn't remove it, and refuses while docker-evals
+>    runs or anything is mounted under its data root. It ends with an
+>    `iptables-save` diff and exits 2 if any rule outside the eval range changed. It leaves `runsc` installed.
 
 Goal: live Tier 3 trials run under gVisor (runsc, systrap platform, so no /dev/kvm is needed). They run on a
 **separate** Docker daemon, so the main daemon and its apps are untouched.

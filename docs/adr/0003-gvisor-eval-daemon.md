@@ -40,3 +40,13 @@ estimated) remain an option, but cost money per run.
   other sites on the same edge. The CDNs say they block domain fronting; that is not verified. A trial holds no
   secret, only a per-run gateway token, and the skills are public.
 - The eval daemon uses its own containerd namespaces, and `firewall.sh` runs before every start of the daemon.
+
+**Amendment (2026-11-12, #137): the second daemon is withdrawn.**
+- On the shared host, starting `docker-evals` took the main daemon's networks down twice. With iptables on, it rebuilt the
+  shared forwarding chains with only `br-evals` in them. With iptables off (#136), it deleted `docker0`. Neither was an
+  address overlap. Two dockerds in one network namespace aren't safe, whatever the config.
+- Decided by Enes, 2026-11-12, by direct message, at the request of the host's operator: no second dockerd on the
+  shared host. `install.sh` and `preflight.sh` refuse whenever another dockerd is running. Every host change is
+  announced before it runs.
+- gVisor stays the isolation layer. Where it runs (proposed: runsc as an extra runtime on the main daemon, selected
+  per trial through a SkillEvaluator `--env-mode`) is decided in #137 and recorded in a further amendment.

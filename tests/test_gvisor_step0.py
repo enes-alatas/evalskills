@@ -56,7 +56,7 @@ def test_daemon_uses_its_own_containerd_namespaces():
     assert cfg["default-runtime"] == "runsc"
 
 
-@pytest.mark.parametrize("script", ["firewall.sh", "install.sh"])
+@pytest.mark.parametrize("script", ["firewall.sh", "install.sh", "uninstall.sh", "preflight.sh"])
 def test_scripts_parse(script):
     subprocess.run(["sh", "-n", str(GVISOR / script)], check=True, timeout=30)
 
@@ -129,11 +129,11 @@ ROUTES_OK = "default via 192.0.2.1 dev eth0\n172.17.0.0/16 dev docker0\n172.31.2
 @pytest.mark.parametrize(("routes", "code"), [(ROUTES_CLASH, 1), (ROUTES_OK, 0)])
 def test_preflight_refuses_a_range_that_overlaps_host_routes(tmp_path, routes, code):
     """Step-0 incident: the eval daemon must not start where its range overlaps another network on the host."""
-    fake = {"ip": f"cat <<'R'\n{routes}R", "id": "echo 0", "runsc": "true"}
+    fake = {"ip": f"cat <<'R'\n{routes}R", "id": "echo 0", "runsc": "true", "pgrep": "exit 1"}
     for name, body in fake.items():
         (tmp_path / name).write_text(f"#!/bin/sh\n{body}\n")
         (tmp_path / name).chmod(0o755)
-    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "MAIN_DOCKER_SOCK": str(tmp_path / "none.sock")}
     p = subprocess.run(["sh", str(GVISOR / "preflight.sh")], env=env, capture_output=True, text=True)
     assert p.returncode == code, p.stderr
     if code:
@@ -152,3 +152,91 @@ def test_eval_daemon_writes_no_iptables_rules():
     cfg = json.loads((GVISOR / "daemon-evals.json").read_text())
     assert cfg["iptables"] is False and cfg["ip6tables"] is False and cfg["ipv6"] is False
     assert "icc" not in cfg  # enforced through Docker's iptables rules, so a no-op here; nobody should count on it
+
+
+# Anything that would change a machine: if a guard regresses, the script fails loudly here and touches nothing.
+DANGEROUS = (
+    "curl",
+    "gpg",
+    "apt-get",
+    "systemctl",
+    "groupadd",
+    "groupdel",
+    "userdel",
+    "install",
+    "iptables",
+    "iptables-save",
+    "rm",
+    "sed",
+    "docker",
+    "dpkg",
+)
+
+
+def stub_bin(tmp_path, **bodies):
+    for name in DANGEROUS:
+        (tmp_path / name).write_text("#!/bin/sh\nexit 99\n")
+        (tmp_path / name).chmod(0o755)
+    for name, body in bodies.items():
+        (tmp_path / name).write_text(f"#!/bin/sh\n{body}\n")
+        (tmp_path / name).chmod(0o755)
+    return {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize("script", ["install.sh", "preflight.sh"])
+def test_refuses_next_to_another_dockerd(tmp_path, script):
+    """#137: a second dockerd broke the main daemon's networks twice. Refuse whenever one is already running."""
+    env = stub_bin(tmp_path, pgrep="exit 0", id="echo 0", runsc="true", ip="true")
+    p = subprocess.run(["sh", str(GVISOR / script)], env=env, capture_output=True, text=True, cwd=tmp_path)
+    assert p.returncode == 1 and "another dockerd" in p.stderr
+
+
+def test_uninstall_is_a_dry_run_without_yes(tmp_path):
+    """#138: it says what it touches first, and acts only with --yes."""
+    env = stub_bin(tmp_path, id="echo 0", ip="exit 99")
+    p = subprocess.run(["sh", str(GVISOR / "uninstall.sh")], env=env, capture_output=True, text=True, cwd=tmp_path)
+    assert p.returncode == 0, p.stderr
+    assert "Dry run" in p.stdout and "br-evals" in p.stdout and "EVALS-INPUT" in p.stdout
+
+
+def test_uninstall_needs_root(tmp_path):
+    env = stub_bin(tmp_path, id="echo 1000", ip="exit 99")
+    p = subprocess.run(["sh", str(GVISOR / "uninstall.sh"), "--yes"], env=env, capture_output=True, text=True)
+    assert p.returncode == 1 and "root" in p.stderr
+
+
+def test_uninstall_only_touches_the_eval_range():
+    text = (GVISOR / "uninstall.sh").read_text()
+    deletes = [line for line in text.splitlines() if "iptables -D" in line]
+    assert deletes and all('-s "$SCOPE"' in line for line in deletes)
+    assert "SCOPE=172.31.240.0/20" in text
+    assert "iptables-save" in text and "diff" in text
+
+
+def test_uninstall_leaves_dockremap_and_a_running_daemon_alone(tmp_path):
+    """#138 review: dockremap isn't uniquely ours, and stopping a running eval daemon is its own announced step."""
+    text = (GVISOR / "uninstall.sh").read_text()
+    assert "userdel" not in text.replace("Then: userdel", "")
+    env = stub_bin(tmp_path, id="echo 0", ip="exit 99", systemctl='[ "$1" = is-active ] && exit 0; exit 99')
+    p = subprocess.run(["sh", str(GVISOR / "uninstall.sh"), "--yes"], env=env, capture_output=True, text=True)
+    assert p.returncode == 1 and "own announced step" in p.stderr
+
+
+@pytest.mark.parametrize(
+    ("mounts", "refused"),
+    [
+        ("overlay /var/lib/docker-evals/overlay2/abc/merged overlay rw 0 0\n", True),
+        ("tmpfs /var/lib/docker-evals tmpfs rw 0 0\n", True),
+        ("overlay /var/lib/docker-evals2/x overlay rw 0 0\n/dev/sda1 / ext4 rw 0 0\n", False),
+    ],
+)
+def test_uninstall_refuses_with_mounts_under_the_data_root(tmp_path, mounts, refused):
+    """#138 review: a leftover overlay mount below the data root must stop rm -rf, not only a mount on it."""
+    (tmp_path / "mounts").write_text(mounts)
+    env = stub_bin(tmp_path, id="echo 0", ip="exit 99", systemctl='[ "$1" = is-active ] && exit 3; exit 99')
+    env["MOUNTS_FILE"] = str(tmp_path / "mounts")
+    p = subprocess.run(["sh", str(GVISOR / "uninstall.sh"), "--yes"], env=env, capture_output=True, text=True)
+    if refused:
+        assert p.returncode == 1 and "still mounted" in p.stderr
+    else:
+        assert "still mounted" not in p.stderr  # it goes on, into the stubbed docker call, and stops there
