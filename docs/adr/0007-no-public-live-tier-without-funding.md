@@ -1,6 +1,6 @@
 # ADR-0007: No public live tier without a model budget or sponsor
 
-Date: 2026-11-12 · Status: proposed (Enes, 2026-11-12, in session; reviewed by skillator on #121)
+Date: 2026-11-12 · Status: accepted (Enes, 2026-11-12, by direct message; amended the same day, below)
 
 ## Context
 #121 planned live checks as an optional, operator-approved public layer on NVIDIA Build's free API key, with one
@@ -51,3 +51,12 @@ charges per token. Today every public record is static (`tier1-static`, no LLM).
 - A public result that needs a model, such as Tier 2 on a local embedding model, needs its own issue, and the
   model's licence is checked there.
 - Revisit when funding is offered, or if NVIDIA's terms change.
+
+**Amendment (2026-11-12, #130):** decision 1 is narrowed. Decided by Enes, 2026-11-12, by direct message.
+- What the trial key never backs is a service: nobody but us runs an evaluation on it, whether by submitting a
+  skill, choosing what runs, or triggering a run. That is what §4.2 ("make available to others") rules out here.
+- The pilot's results may be published: per-skill scores, lift, spread between runs, runtime, requests and tokens.
+  Agent transcripts, raw reports and per-case judge verdicts still stay private (decision 2).
+- Where they appear, E12 only or also on the board as labelled pilot results, is decided on #130. Until then,
+  decision 2's guard stands: the public build rejects any `mode: tier3` record.
+- The README and METHODOLOGY §3 say this, in place of "no public result of any kind".

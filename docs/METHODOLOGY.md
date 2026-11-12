@@ -47,9 +47,11 @@ budget or an LLM sponsor (ADR-0007). The leaderboard shows "not run" for every s
 
 Why a free key is not enough: NVIDIA Build's free key comes under the NVIDIA API Trial Terms of Service, which allow
 internal testing and evaluation only, not production, and not making the service or its output available to
-others. So no public result of any kind comes from that key: not live trials, not the LLM stage of the security
-scan, not embeddings. It backs one internal pilot (#121), whose records stay private. The experiment log publishes
-only per-skill measurements from it (runtime, requests, tokens, lift, spread between runs).
+others. Our reading (Enes, ADR-0007 as amended 2026-11-12): nobody but us runs anything on that key, and we may
+publish our own pilot's measured results. So no submission triggers a live run, an LLM-assisted security scan or
+embeddings on it. It backs one internal pilot (#121), which we run on ten skills we chose. Its per-skill results
+(scores, lift, spread between runs, runtime, requests, tokens) may be published, labelled as the pilot's. Agent
+transcripts, raw reports and per-case judge verdicts stay private.
 
 A funded tier would keep one fixed agent and model per live column, so its scores are comparable only within that
 column. Models are never mixed into one score. The sponsor is named next to every result it paid for, and has no
