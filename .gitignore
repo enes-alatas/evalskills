@@ -7,3 +7,7 @@ logs_*.txt
 __pycache__/
 sources/
 *.pid
+
+# gvisor_env build output (uv run --with ./gvisor_env)
+gvisor_env/build/
+*.egg-info/

@@ -50,3 +50,18 @@ estimated) remain an option, but cost money per run.
   announced before it runs.
 - gVisor stays the isolation layer. Where it runs (proposed: runsc as an extra runtime on the main daemon, selected
   per trial through a SkillEvaluator `--env-mode`) is decided in #137 and recorded in a further amendment.
+
+**Amendment (2026-11-12, #137): gVisor on the main daemon.**
+- `runsc` is registered as an extra runtime on the host's main Docker daemon (`runsc install -- --platform=systrap`,
+  then `systemctl reload docker`, with no restart). The default runtime stays runc. Enes ran it in an announced window
+  on 2026-11-12. All existing containers stayed up, and the iptables diff was empty.
+- Trials select it through `--env-mode gvisor` (`gvisor_env/`), a SkillEvaluator entry-point backend. It is
+  SkillEvaluator's hardened Kata class with runtime `runsc` and resolver 127.0.0.1. Before start it refuses a trial
+  with any compose service missing from the runsc overlay (a local `include:` is not covered by Harbor's overlay),
+  and any trial that would build an image (builds run under runc on the host). `compose up` always gets
+  `--no-build`. After start it checks that every
+  container of the trial reports runtime `runsc`, and tears the trial down otherwise. That check is detection after
+  start; prevention is the check before start and the socket proxy.
+- Still to come before any live run, each in its own PR: a socket proxy between Harbor and the daemon, which refuses
+  non-runsc, privileged, host-mounting and build calls; a boot unit for `firewall.sh`; and the gateway and proxy on a
+  dedicated address. Until then `pipeline/tier3.py` refuses to start.
