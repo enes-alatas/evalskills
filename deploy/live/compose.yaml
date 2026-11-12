@@ -1,0 +1,44 @@
+# Live pilot services (#121), on the MAIN Docker daemon: the model gateway and the trial egress proxy. Trials on the
+# gVisor eval daemon (deploy/gvisor/) reach these two ports on br-evals (172.31.248.1) and nothing else.
+# Both use the host network so they can listen on br-evals itself: trial traffic to them is INPUT on the host, which
+# firewall.sh's EVALS-INPUT chain allows for these two ports only. Start docker-evals first: it creates br-evals.
+# Usage (as root, after deploy/gvisor/ step 0): see deploy/live/README.md.
+x-hardening: &hardening
+  build: { context: ../.., dockerfile: deploy/live/Dockerfile }
+  image: evalskills-live:local
+  restart: unless-stopped                    # also retries until br-evals exists
+  network_mode: host
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  mem_limit: 256m
+  memswap_limit: 256m
+  cpus: 0.5
+  pids_limit: 128
+  logging: { driver: json-file, options: { max-size: "10m", max-file: "3" } }
+
+services:
+  gateway:
+    <<: *hardening
+    container_name: evalskills-gateway
+    user: "10002:10002"
+    command: ["python3", "-I", "/opt/gateway/gateway.py", "serve", "--config", "/etc/evalskills/gateway.json"]
+    volumes:
+      - ./gateway.json:/etc/evalskills/gateway.json:ro
+      - gateway-state:/var/lib/evalskills-gateway   # caps and counters survive restarts
+    secrets: [model_key]                    # the only place the model key exists (ADR-0004)
+
+  egress-proxy:
+    <<: *hardening
+    container_name: evalskills-egress-proxy
+    user: "10003:10003"
+    command: ["python3", "-I", "/opt/gateway/egress_proxy.py", "--config", "/etc/evalskills/egress-proxy.json"]
+    volumes:
+      - ./egress-proxy.json:/etc/evalskills/egress-proxy.json:ro
+
+secrets:
+  model_key:
+    file: /etc/evalskills/secrets/model_key  # on the host: owner 10002, mode 0400 (see README)
+
+volumes:
+  gateway-state:

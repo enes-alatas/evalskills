@@ -18,6 +18,8 @@ The design is in `docs/ARCHITECTURE.md` and its ADRs. This file lists what the h
 - About 2 CPU and 3 GB RAM reserved for the eval daemon, on top of the app.
 - A model-provider key on the host for the gateway (ADR-0004). Egress from the gateway goes to the provider's API
   only.
+- The model gateway and the trial egress proxy (`deploy/live/`), on the main daemon with host networking. They
+  listen on the eval bridge only. The proxy reaches an allowlist of download hosts (ADR-0003, amended 2026-11-12).
 
 ## Managed sandbox alternative (estimate, not measured)
 E2B or Daytona: 2 vCPU and 4 GiB cost about $0.17/h. about 4 cases × 2 arms + 1 preflight ≈ 9 sandboxes × 5–10 min

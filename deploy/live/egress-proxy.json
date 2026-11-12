@@ -1,0 +1,17 @@
+{
+  "listen_host": "172.31.248.1",
+  "listen_port": 3128,
+  "allowed_hosts": [
+    "deb.debian.org",
+    "security.debian.org",
+    "archive.ubuntu.com",
+    "security.ubuntu.com",
+    "nodejs.org",
+    "raw.githubusercontent.com",
+    "registry.npmjs.org"
+  ],
+  "allowed_clients": [
+    "172.31.240.0/20"
+  ],
+  "idle_timeout_s": 120
+}
