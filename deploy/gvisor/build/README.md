@@ -42,12 +42,15 @@ gh run view <run_id> -R enes-alatas/evalskills --json workflowName,event,headBra
 gh run download <run_id> -R enes-alatas/evalskills -n trial-base -D trial-base/
 ```
 
-Only then cross-check the json: `commit` equals `headSha`, `run_id` is that run, and `"loadable": true`. Other runs
-upload `trial-base-check-only-<run_id>` with `"loadable": false`, which only guards against an honest mix-up.
+Only then cross-check the json: `commit` equals `headSha`, `run_id` is that run, `"pinned": "committed"` and
+`"loadable": true`. Other runs upload `trial-base-check-only-<run_id>` with `"loadable": false`, which only guards
+against an honest mix-up. A run whose `FROM` digest was still the placeholder (`"pinned": "new"`) is never loadable
+either: it built from a digest it resolved itself, not from the reviewed one.
 
 1. On a machine with Docker, set the `FROM` digest in `base/Dockerfile` to the current `python:3.12-slim` digest
-   (`docker buildx imagetools inspect python:3.12-slim`). Commit that by PR: it is all zeros until the first build.
-   The workflow pins it in its working copy and reports it, so the PR can take the digest from there.
+   (`docker buildx imagetools inspect python:3.12-slim`), and commit it by PR. It is pinned to `5e2bdb1b…`, the
+   digest the first `trial-base` run on `main` resolved (run 43447515323). To move it, resolve it again the same way
+   and change it by PR.
 2. `docker build -t evalskills/trial-base:d136a597 deploy/gvisor/build/base`
 3. `docker save evalskills/trial-base:d136a597 | gzip > trial-base.tar.gz`. Copy the file to the host, and announce
    the step first (CONVENTIONS, shared hosts). Check its sha256 against `trial-base.json`.
