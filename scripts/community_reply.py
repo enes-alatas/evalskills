@@ -1,10 +1,14 @@
-"""Post the fixed first reply on a report from outside the team (#146; .github/workflows/community-reply.yml).
+"""Label and answer a report from outside the team (#146, #151; .github/workflows/community-reply.yml).
 
-The reply is `.github/community-reply.md`, word for word. Nothing from the issue goes into it: a report is untrusted
-input (docs/CONVENTIONS.md, Issues). The script reads only the issue's labels and whether a comment already carries
-the reply's marker, so it posts once per issue, however often it runs.
+An issue is a report when its author isn't on the team (GitHub's `author_association` is not OWNER, MEMBER or
+COLLABORATOR), whichever form they used, or when it carries `community` (the report form presets it). A report from
+outside gets `community` and `triage` if either is missing. Every report gets the fixed first reply,
+`.github/community-reply.md` word for word, once: the script skips it when a comment already carries the marker.
 
-  GH_TOKEN=... python3 -I scripts/community_reply.py --repo owner/name --issue 12
+Nothing from the issue goes into what it writes: a report is untrusted input (docs/CONVENTIONS.md, Issues). It reads
+only the association, the labels and whether its marker is in a comment.
+
+  GH_TOKEN=... python3 -I scripts/community_reply.py --repo owner/name --issue 12 [--author-association NONE]
 """
 
 import argparse
@@ -16,6 +20,8 @@ from pathlib import Path
 REPLY = Path(__file__).resolve().parents[1] / ".github" / "community-reply.md"
 MARKER = "<!-- evalskills:community-reply -->"
 LABEL = "community"
+REPORT_LABELS = ("community", "triage")
+TEAM = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
 
 def reply_text() -> str:
@@ -25,9 +31,19 @@ def reply_text() -> str:
     return text
 
 
-def should_reply(labels: list[str], comment_bodies: list[str]) -> bool:
-    """Only a `community` issue, and only if no comment carries the marker yet."""
-    return LABEL in labels and not any(MARKER in body for body in comment_bodies)
+def from_outside(association: str) -> bool:
+    return association.upper() not in TEAM
+
+
+def labels_to_add(association: str, labels: list[str]) -> list[str]:
+    """The report labels an outside author's issue is missing; none for the team's own issues."""
+    return [name for name in REPORT_LABELS if name not in labels] if from_outside(association) else []
+
+
+def should_reply(association: str, labels: list[str], comment_bodies: list[str]) -> bool:
+    """A report (from outside, or labelled `community`), and only if no comment carries the marker yet."""
+    is_report = from_outside(association) or LABEL in labels
+    return is_report and not any(MARKER in body for body in comment_bodies)
 
 
 def gh_json(*args: str):
@@ -39,16 +55,27 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--issue", required=True, type=int)
+    # A drill (workflow_dispatch) treats a maintainer's test issue as if its author were outside the team.
+    ap.add_argument("--author-association", default="", choices=["", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"])
     args = ap.parse_args(argv)
     base = f"repos/{args.repo}/issues/{args.issue}"
     issue = gh_json(base)
     if "pull_request" in issue:
         print("a pull request, not an issue: nothing to do")
         return 0
+    association = args.author_association or issue.get("author_association") or "NONE"
     labels = [label["name"] for label in issue.get("labels", [])]
+    missing = labels_to_add(association, labels)
+    if missing:
+        cmd = ["gh", "api", "-X", "POST", f"{base}/labels"]
+        for name in missing:
+            cmd += ["-f", f"labels[]={name}"]
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+        print("labelled: " + ", ".join(missing))
+        labels += missing
     comments = [c.get("body") or "" for page in gh_json("--paginate", "--slurp", f"{base}/comments") for c in page]
-    if not should_reply(labels, comments):
-        print("no reply: not a community issue, or already replied")
+    if not should_reply(association, labels, comments):
+        print("no reply: a team issue, or already replied")
         return 0
     subprocess.run(
         ["gh", "api", "-X", "POST", f"{base}/comments", "-f", f"body={reply_text()}"],

@@ -1,13 +1,19 @@
-# Posts one fixed first reply on a report from outside the team (#146): an issue opened with the `community` label,
-# which the "Report a problem" form presets. The reply is .github/community-reply.md, word for word, and echoes
-# nothing of the report (untrusted input). scripts/community_reply.py looks for the reply's marker first, so a
-# re-run or a dispatch posts nothing twice. Edits and reopens don't trigger it.
+# Labels and answers a report from outside the team (#146, #151). On every opened issue, scripts/community_reply.py
+# reads the author's association with the repo: an author outside the team (not OWNER, MEMBER or COLLABORATOR) gets
+# `community` and `triage` added if missing, whichever form they used. Every report, from outside or labelled
+# `community` by the report form, gets .github/community-reply.md once, word for word. The script decides from the
+# API, not from the event payload, and looks for the reply's marker first, so a re-run or a dispatch posts nothing
+# twice. Edits and reopens don't trigger it. Nothing it writes echoes the report (untrusted input).
 #
-# It runs on issue events with `issues: write` (Enes, 2026-11-13, on #146; docs/CONVENTIONS.md, CI). An issue
-# event always runs the default branch's copy of this file and scripts, never a branch's.
+# It runs on issue events with `issues: write` (Enes, 2026-11-13, on #146 and #151; docs/CONVENTIONS.md, CI). An
+# issue event always runs the default branch's copy of this file and scripts, never a branch's.
+#
+# The job starts for every opened issue, the team's too, and the script does nothing on those. That is one short
+# runner per issue, and it keeps the decision in one tested place.
 #
 # workflow_dispatch is the drill: PR CI never fires an issue event, so a maintainer proves it after the merge by
-# dispatching it against a test issue. Anyone with write access can already post this comment by hand.
+# dispatching it against a test issue, optionally as if its author were outside the team. Anyone with write access
+# can already add these labels and post this comment by hand.
 name: community-reply
 
 on:
@@ -16,8 +22,14 @@ on:
   workflow_dispatch:
     inputs:
       issue:
-        description: issue number to reply on (it must carry the community label)
+        description: issue number to label and reply on
         required: true
+      author_association:
+        description: treat the issue's author as this (empty uses the issue's own)
+        required: false
+        default: ""
+        type: choice
+        options: ["", NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR]
 
 # An explicit block is the whole grant: checkout needs contents: read on a private repo.
 permissions:
@@ -30,7 +42,6 @@ concurrency:
 
 jobs:
   reply:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'community')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -41,8 +52,9 @@ jobs:
             .github/community-reply.md
             scripts/community_reply.py
           sparse-checkout-cone-mode: false
-      - name: Post the fixed reply once
+      - name: Label a report from outside, and post the fixed reply once
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
-        run: python3 -I scripts/community_reply.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE"
+          AS: ${{ inputs.author_association }}
+        run: python3 -I scripts/community_reply.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE" --author-association "$AS"
