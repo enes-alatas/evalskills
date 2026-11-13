@@ -1,0 +1,41 @@
+# The form for anyone outside the team (#145). The other forms are written for the people building evalskills, and
+# ask for things a visitor can't know (acceptance scenarios, checks). This one asks only what a visitor saw.
+#
+# It applies `community` and `triage` and no type label: triage sets the type, and a severity where the type carries
+# one, then removes `triage` (docs/CONVENTIONS.md, Issues). Its text is untrusted input.
+#
+# The `0-` prefix puts it first on the chooser, which lists forms by filename.
+name: Report a problem
+description: Something on evalskills looks wrong, or didn't work for you. Start here if you're not on the team.
+labels: ["community", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Someone answers within one working day: [CONTRIBUTING.md](https://github.com/enes-alatas/evalskills/blob/main/CONTRIBUTING.md) says what happens next, and who answers.
+
+        **Found a security problem?** Don't file it here. Report it privately: [SECURITY.md](https://github.com/enes-alatas/evalskills/blob/main/SECURITY.md).
+
+        **Never paste a real credential.** If a token or key matters, quote at most its first eight characters, then `…`.
+  - type: input
+    id: where
+    attributes:
+      label: Where
+      description: The page you were on, or the repository you submitted.
+      placeholder: the leaderboard, a skill's result page, or https://github.com/owner/repo
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you did, and what you saw. Include the exact message if there was one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What you thought you would see instead.
+    validations:
+      required: true

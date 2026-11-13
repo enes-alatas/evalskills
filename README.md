@@ -91,8 +91,8 @@ sandbox runs separately, as described in `docs/ARCHITECTURE.md`. Hosting notes: 
 
 ## Contributing
 
-Read `AGENTS.md`, then `docs/CONVENTIONS.md`. Every change lands by PR, from a typed issue, with green CI. Before
-pushing:
+To report a problem, see `CONTRIBUTING.md`. For a vulnerability, see `SECURITY.md`. To work on the code, read
+`AGENTS.md`, then `docs/CONVENTIONS.md`. Every change lands by PR, from a typed issue, with green CI. Before pushing:
 
 ```bash
 ln -s ../../scripts/pre-commit .git/hooks/pre-commit   # once: secret scan on every commit (needs gitleaks 8.30.1)
