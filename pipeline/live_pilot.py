@@ -5,8 +5,9 @@ gateway's counts for that run (requests, tokens) go into its record. Records go 
 which is never committed and never reaches the public build (ADR-0007: the board shows no pilot result; E12 in
 docs/EXPERIMENT_LOG.md publishes per-skill results).
 
-Run on the VPS, as root, after deploy/gvisor/ and deploy/live/ are set up:
-  DOCKER_HOST=unix:///run/docker-evals.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \\
+Run on the VPS, as root, after deploy/gvisor/ and deploy/live/ are set up. SkillEvaluator itself runs as the trial
+user (tier3.TRIAL_USER), through the socket proxy:
+  DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \\
   TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \\
   python3 -I pipeline/live_pilot.py [--only SLUG] [--dry-run]
 """
@@ -117,6 +118,8 @@ def read_lift(out: Path) -> dict:
     """What SkillEvaluator wrote: execution status and the overall arm scores and lift, per agent. Nothing derived."""
     found = {}
     for lift in sorted(out.glob("*/*/lift.json")):
+        if any(q.is_symlink() for q in (lift, lift.parent, lift.parent.parent)):
+            continue  # tier3.copy_report keeps no links; never read through one
         try:
             data = json.loads(lift.read_text())
         except (OSError, ValueError):
@@ -131,10 +134,14 @@ def read_lift(out: Path) -> dict:
     return found
 
 
-def status_of(exit_code: int | None, lift: dict) -> tuple[str, str | None]:
+def status_of(
+    exit_code: int | None, lift: dict, unsupported: bool = False, stopped: str | None = None
+) -> tuple[str, str | None]:
     """completed only when SkillEvaluator says the run succeeded and reports a lift; never a zero for a gap."""
+    if unsupported and not lift:
+        return "unsupported", "needs a custom environment or dependencies (its Dockerfile is not on the allowlist)"
     if exit_code is None:
-        return "failed", "timed out"
+        return "failed", stopped or "timed out"
     if not lift:
         return "failed", f"no lift.json (exit {exit_code})"
     agent = next(iter(lift.values()))
@@ -146,7 +153,7 @@ def status_of(exit_code: int | None, lift: dict) -> tuple[str, str | None]:
 
 
 def record(row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: dict | None, started: str) -> dict:
-    status, reason = status_of(res["exit"], lift)
+    status, reason = status_of(res["exit"], lift, res.get("unsupported", False), res.get("stopped"))
     agent = next(iter(lift.values()), {})
     return {
         "id": run_id,

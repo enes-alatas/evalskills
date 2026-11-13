@@ -87,3 +87,27 @@ estimated) remain an option, but cost money per run.
   commands. The skill's files are present but never run. Accepted on #137.
 - The SkillEvaluator repin procedure now includes regenerating the allowlist (`scripts/gvisor_dockerfiles.py`) and
   reviewing the diff.
+
+**Amendment (2026-11-13, #137): who runs a trial.**
+- `pipeline/tier3.py` runs only `--env-mode gvisor` (`gvisor_env/`) with `DOCKER_HOST` set to the socket proxy. It
+  refuses to start when the proxy's `GET /_evalskills/firewall` doesn't report the trial firewall in place.
+- The pilot stays the operator, because it issues and revokes gateway tokens on the main daemon. Only the
+  SkillEvaluator process runs as the trial user (`TIER3_TRIAL_USER`, default `evals`). That user's only Docker access
+  is the proxy socket's group, and the runner refuses a trial user that could open Docker's own socket. It gets the
+  token in its environment, never the token file.
+- SkillEvaluator forwards no `DOCKER_*` variable from a custom backend to Harbor. So the proxy's path travels as
+  `EVALSKILLS_DOCKER_SOCKET`, and GvisorEnvironment sets `DOCKER_HOST` from it in Harbor's process before any Docker
+  call. Unset, it defaults to `/run/evalskills/docker.sock`, never Docker's default socket.
+- Each trial gets a fresh folder under `TIER3_RUN_ROOT` (`/srv/evals/run`, the proxy's `bind_root`, owned by the
+  trial user). The skill copy, SkillEvaluator's results (Harbor's trial folders, which become binds) and `TMPDIR` all
+  live in that folder. When the trial ends, the operator first stops everything of it: the child runs in its own
+  session, which is killed, then any process left under the trial uid, and the pilot stops if one survives. Then it
+  removes our containers and networks through the proxy. Then it copies the report into a fresh `reports/` folder
+  as root: only folders and the bytes of regular files, as 0755/0644, never through a link and never opening a FIFO.
+  Everything else is listed in `skipped.json`. Last, it removes the trial folder. The log goes to a root file,
+  never into that folder. So a link a skill plants can reach only that trial's own files.
+- SkillEvaluator runs from its synced venv, with `evalskills_gvisor` installed into it once at setup. It doesn't run
+  through `uv run`, which would have the trial user write to the evaluator's environment.
+- A trial whose Dockerfile the proxy refuses is recorded as `unsupported` (needs a custom environment or
+  dependencies), never `failed` and never scored. The evidence is a file that GvisorEnvironment writes
+  (`EVALSKILLS_UNSUPPORTED_FILE`), in a folder no container is bound to, not the log, which a skill can fill.
