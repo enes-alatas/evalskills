@@ -8,9 +8,13 @@ things:
   operator (no environment kwargs are accepted);
 - preflight checks that runsc is registered with Docker, and not for /dev/kvm (gVisor's systrap platform needs none);
 - before start, every service in SkillEvaluator's hardened compose model must be in the runsc overlay. Harbor's overlay
-  doesn't follow a local ``include:``, so an included service would otherwise run under runc. And Harbor must not
-  build: ``docker compose build`` runs on the host's BuildKit under runc, so a trial needs a prebuilt image, and
-  ``compose up`` always gets ``--no-build`` (a ``build:`` key on a sidecar, or ``pull_policy: build``, would build);
+  doesn't follow a local ``include:``, so an included service would otherwise run under runc. And Compose never
+  builds: ``compose up`` always gets ``--no-build`` (a ``build:`` key on a sidecar, or ``pull_policy: build``, would
+  build on the host's BuildKit). Instead, when the task has a Dockerfile, the environment sends its build context to
+  the Docker socket proxy's ``POST /_evalskills/build``. The proxy builds the committed Dockerfile that matches the
+  template's (legacy builder, no network, the pinned base image, see gateway/docker_build.py) and returns a tag,
+  which then becomes the trial's prebuilt image. A Dockerfile that isn't the template's (a custom environment, or a
+  skill's requirements.txt or apt-packages.txt) is refused there, and the trial fails as unsupported;
 - after start, every container of the trial's compose project must report ``HostConfig.Runtime == runsc``. If any
   doesn't, or none can be found, the trial is torn down and the start fails. This *detects* a non-runsc container
   after the fact; it doesn't prevent one. Prevention is the check before start, plus the socket proxy (#137).
@@ -23,8 +27,13 @@ Harbor labels this environment type "kata"; SkillEvaluator's reports carry the e
 from __future__ import annotations
 
 import asyncio
+import http.client
+import io
 import json
+import os
+import socket
 import subprocess
+import tarfile
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +45,28 @@ from skillevaluator.tier3_environments import EnvironmentBackendSpec
 
 RUNTIME = "runsc"
 NO_DNS = ("127.0.0.1",)
+BUILD_ROUTE = "/_evalskills/build"
+UNSUPPORTED_BUILD = "gvisor env mode: unsupported environment"
+
+
+class _Unix(http.client.HTTPConnection):
+    def __init__(self, path: str, timeout: float):
+        super().__init__("localhost", timeout=timeout)
+        self._path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self._path)
+
+
+def context_tar(environment_dir) -> bytes:
+    """The task's build context as an uncompressed tar. Links are stored as links, never followed."""
+    out = io.BytesIO()
+    with tarfile.open(fileobj=out, mode="w", format=tarfile.PAX_FORMAT) as t:
+        for path in sorted(environment_dir.rglob("*")):
+            t.add(path, arcname=path.relative_to(environment_dir).as_posix(), recursive=False)
+    return out.getvalue()
 
 
 @dataclass(frozen=True)
@@ -112,22 +143,52 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
         ).stdout
         return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
 
-    def _refuse_before_start(self, force_build: bool) -> None:
-        """Prevention, before anything is built or created: every declared service is pinned, and nothing is built."""
+    def _refuse_before_start(self) -> None:
+        """Prevention, before anything is built or created: every declared service is pinned to runsc."""
         declared = set(self._compose_model_metadata()[1])
         pinned = set(json.loads(self._ensure_runtime_compose_file().read_text())["services"])
         if missing := sorted(declared - pinned):
             raise RuntimeError(f"gvisor env mode refused the trial: services not pinned to runsc: {', '.join(missing)}")
+
+    def _proxy_socket(self) -> str:
+        host = self._trusted_docker_client_environment().get("DOCKER_HOST") or os.environ.get("DOCKER_HOST", "")
+        if not host.startswith("unix://"):
+            raise RuntimeError("gvisor env mode needs DOCKER_HOST=unix://<the Docker socket proxy> to build")
+        return host.removeprefix("unix://")
+
+    def _build_through_proxy(self) -> str:
+        """Send the build context to the proxy, which writes and runs the build itself. → the image tag."""
+        body = context_tar(self.environment_dir)
+        conn = _Unix(self._proxy_socket(), timeout=900)
+        try:
+            conn.request(
+                "POST",
+                BUILD_ROUTE,
+                body=body,
+                headers={"Host": "docker", "Content-Type": "application/x-tar", "Content-Length": str(len(body))},
+            )
+            resp = conn.getresponse()
+            doc = json.loads(resp.read(1024 * 1024) or b"{}")
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"gvisor env mode: the build request failed ({type(e).__name__})") from e
+        finally:
+            conn.close()
+        if resp.status == 403:
+            raise RuntimeError(f"{UNSUPPORTED_BUILD}: {doc.get('message', 'refused')}")
+        if resp.status != 200 or not isinstance(doc.get("tag"), str):
+            raise RuntimeError(f"gvisor env mode: the build failed ({resp.status}): {doc.get('message', '')}")
+        return doc["tag"]
+
+    async def start(self, force_build: bool) -> None:
+        self._refuse_before_start()
         if not should_use_prebuilt_docker_image(
             self.environment_dir, docker_image=self.task_env_config.docker_image, force_build=force_build
         ):
-            raise RuntimeError(
-                "gvisor env mode refused the trial: it would build an image on the host (runc); use a prebuilt image"
-            )
-
-    async def start(self, force_build: bool) -> None:
-        self._refuse_before_start(force_build)
-        await super().start(force_build)
+            tag = await asyncio.to_thread(self._build_through_proxy)
+            # a copy: the caller may share this config with other trials (#142 review)
+            self.task_env_config = self.task_env_config.model_copy(update={"docker_image": tag})
+            self._env_vars.prebuilt_image_name = tag
+        await super().start(False)
         try:
             runtimes = await asyncio.to_thread(self._project_runtimes)
         except (subprocess.SubprocessError, OSError) as e:

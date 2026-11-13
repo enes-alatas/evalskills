@@ -19,8 +19,12 @@ runs as root next to the daemon. Its docstring lists the rules: allowlisted rout
 objects only, no builds or pulls, binds only from under `/srv/evals/run`, internal networks. The proxy also has a
 firewall check, `GET /_evalskills/firewall`. Example config: `deploy/gvisor/docker-proxy.example.json`.
 
+Builds: Compose never builds. When a task has a Dockerfile, `GvisorEnvironment` sends its build context to the
+proxy's `POST /_evalskills/build` and gets back a tag, which becomes the trial's prebuilt image. The proxy builds only
+allowlisted Dockerfiles (`deploy/gvisor/build/README.md`). A refused one fails the trial with "unsupported
+environment", and the runner records it as unsupported, never as a score.
+
 Not here yet:
-- Image builds by `GvisorEnvironment`: the hash allowlist, a pinned base image, and `--network none` (#137, PR B).
 - The runner's per-trial folders, the eval user, the disk cap, and the proxy's and the firewall's boot units
   (#137, PR C).
 
