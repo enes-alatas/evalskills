@@ -8,6 +8,7 @@ Elsewhere (CI, the plain test run) it is skipped."""
 import asyncio
 import io
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -48,6 +49,41 @@ def test_the_mode_is_registered_through_the_entry_point():
     spec = load_custom_backend("gvisor")
     assert spec is g.SPEC and spec.import_path == "evalskills_gvisor:GvisorEnvironment"
     assert not spec.environment_kwargs  # operators can't pass a runtime or DNS
+
+
+@pytest.fixture(autouse=True)
+def _restore_docker_env(monkeypatch):
+    """GvisorEnvironment sets DOCKER_HOST in its process; give each test the original back."""
+    monkeypatch.setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+    monkeypatch.setenv("DOCKER_CONTEXT", "default")
+    monkeypatch.delenv(g.SOCKET_ENV, raising=False)
+
+
+def test_harbor_gets_the_proxy_socket_and_the_unsupported_mark(monkeypatch):
+    """SkillEvaluator's own lookup: Harbor's environment is its base set plus the backend's host_env_vars, and the
+    backend loads (a forbidden name, such as DOCKER_HOST, makes the lookup return nothing)."""
+    from skillevaluator.tier3.harbor import runner
+
+    assert runner._custom_backend("gvisor") is g.SPEC
+    names = runner._env_mode_host_env_vars("gvisor")
+    assert {g.SOCKET_ENV, g.UNSUPPORTED_FILE_ENV} <= names
+    monkeypatch.setenv(g.SOCKET_ENV, "/run/evalskills/docker.sock")
+    monkeypatch.setenv(g.UNSUPPORTED_FILE_ENV, "/srv/evals/run/t3-x/marks/unsupported")
+    got = runner._selected_host_environment(names, os.environ)
+    assert got[g.SOCKET_ENV] == "/run/evalskills/docker.sock"
+    assert got[g.UNSUPPORTED_FILE_ENV] == "/srv/evals/run/t3-x/marks/unsupported"
+
+
+def test_the_environment_points_docker_at_the_proxy_never_the_default(tmp_path, monkeypatch):
+    e = env(tmp_path)
+    trusted = e._trusted_docker_client_environment()
+    assert trusted["DOCKER_HOST"] == "unix://" + g.DEFAULT_SOCKET and "DOCKER_CONTEXT" not in trusted
+    monkeypatch.setenv(g.SOCKET_ENV, "/srv/x/proxy.sock")
+    assert env(tmp_path)._trusted_docker_client_environment()["DOCKER_HOST"] == "unix:///srv/x/proxy.sock"
+    for bad in ("relative.sock", "/var/run/docker.sock", "/run/docker.sock"):
+        monkeypatch.setenv(g.SOCKET_ENV, bad)
+        with pytest.raises(RuntimeError, match="socket proxy"):
+            env(tmp_path)
 
 
 def test_every_service_gets_runsc_and_no_resolver(tmp_path):
@@ -174,8 +210,10 @@ def test_a_refused_build_is_reported_as_unsupported(monkeypatch, tmp_path):
 
     monkeypatch.setattr(g, "_Unix", Conn)
     monkeypatch.setattr(g.GvisorEnvironment, "_proxy_socket", lambda self: "/run/evalskills/docker.sock")
+    monkeypatch.setenv(g.UNSUPPORTED_FILE_ENV, str(tmp_path / "unsupported"))
     with pytest.raises(RuntimeError, match="unsupported environment"):
         e._build_through_proxy()
+    assert "not on the allowlist" in (tmp_path / "unsupported").read_text()  # the runner's evidence, not the log
 
 
 def test_a_real_build_goes_from_the_environment_to_the_proxy_handler(monkeypatch, tmp_path):
@@ -188,7 +226,7 @@ def test_a_real_build_goes_from_the_environment_to_the_proxy_handler(monkeypatch
     (e.environment_dir / "skills").mkdir()
     (e.environment_dir / "skills" / "SKILL.md").write_text("hi")
     with tdb.running_proxy(tmp_path / "proxy") as p:
-        monkeypatch.setattr(g.GvisorEnvironment, "_proxy_socket", lambda self: p["sock"])
+        monkeypatch.setenv(g.SOCKET_ENV, p["sock"])  # the real path: the environment's own lookup
         tag = e._build_through_proxy()
         [(_, body)] = p["state"]["builds"]
     assert tag.startswith(tdb.db.TAG_REPO + ":")

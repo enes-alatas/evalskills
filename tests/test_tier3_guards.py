@@ -1,5 +1,9 @@
 import json
+import os
+import socketserver
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -9,6 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "pipeline"))
 import tier3  # noqa: E402
 
 FAKE_TOKEN = "gw-test-0000-not-a-real-token"
+
+
+def OK():
+    return True, "ok"
 
 
 @pytest.fixture
@@ -23,51 +31,93 @@ def safe(tmp_path):
 
 
 def test_a_safe_setup_gets_only_the_gateway_token(safe):
-    env = tier3.trial_env(safe)
+    env = tier3.trial_env(safe, OK)
     assert env["DOCKER_HOST"] == tier3.EVALS_SOCKET
+    assert "unix://" + env["EVALSKILLS_DOCKER_SOCKET"] == tier3.EVALS_SOCKET  # the name Harbor is given
     assert env["SKILL_EVAL_LLM_PROVIDER"] == "openai-compatible"
     assert env["SKILL_EVAL_LLM_API_KEY"] == FAKE_TOKEN
     assert not any(k in env for k in ("ANTHROPIC_API_KEY", "NVIDIA_API_KEY", "OPENAI_API_KEY"))
 
 
-@pytest.mark.parametrize("mode", ["local", "e2b", "modal", "daytona", "kata"])
-def test_refuses_any_env_mode_but_docker(safe, monkeypatch, mode):
+@pytest.mark.parametrize("mode", ["local", "docker", "e2b", "modal", "daytona", "kata"])
+def test_refuses_any_env_mode_but_gvisor(safe, monkeypatch, mode):
     monkeypatch.setattr(tier3, "ENV_MODE", mode)
     with pytest.raises(tier3.Unsafe, match="env-mode"):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
 
 
-@pytest.mark.parametrize("host", [None, "", "unix:///var/run/docker.sock", "tcp://10.0.0.2:2375"])
-def test_refuses_any_daemon_but_docker_evals(safe, host):
+@pytest.mark.parametrize(
+    "host", [None, "", "unix:///var/run/docker.sock", "unix:///run/docker-evals.sock", "tcp://10.0.0.2:2375"]
+)
+def test_refuses_anything_but_the_socket_proxy(safe, host):
     safe.pop("DOCKER_HOST")
     if host is not None:
         safe["DOCKER_HOST"] = host
     with pytest.raises(tier3.Unsafe, match="DOCKER_HOST"):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
 
 
 @pytest.mark.parametrize("key", tier3.REAL_KEYS)
 def test_refuses_when_a_real_provider_key_is_present(safe, key):
     safe[key] = "sk-test-0000-not-a-real-key"
     with pytest.raises(tier3.Unsafe, match=key):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
 
 
 @pytest.mark.parametrize("missing", ["TIER3_GATEWAY_URL", "TIER3_GATEWAY_TOKEN_FILE"])
 def test_refuses_without_the_gateway(safe, missing):
     safe.pop(missing)
     with pytest.raises(tier3.Unsafe, match="gateway"):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
 
 
 def test_refuses_an_unreadable_or_empty_token(safe, tmp_path):
     safe["TIER3_GATEWAY_TOKEN_FILE"] = str(tmp_path / "absent")
     with pytest.raises(tier3.Unsafe, match="cannot read"):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
     (tmp_path / "empty").write_text("\n")
     safe["TIER3_GATEWAY_TOKEN_FILE"] = str(tmp_path / "empty")
     with pytest.raises(tier3.Unsafe, match="empty"):
-        tier3.trial_env(safe)
+        tier3.trial_env(safe, OK)
+
+
+def test_refuses_while_the_proxy_reports_no_firewall(safe):
+    with pytest.raises(tier3.Unsafe, match="firewall is not in place .EVALS-EGRESS does not end in DROP"):
+        tier3.trial_env(safe, lambda: (False, "EVALS-EGRESS does not end in DROP"))
+
+
+def test_the_firewall_question_goes_to_the_proxy(tmp_path):
+    sock = Path("/tmp") / f"t3fw-{os.getpid()}.sock"
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def address_string(self):
+            return "unix"
+
+        def do_GET(self):
+            seen.append(self.path)
+            body = json.dumps({"ok": self.server.ok, "why": "x"}).encode()
+            self.send_response(200 if self.server.ok else 503)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = socketserver.UnixStreamServer(str(sock), H)
+    threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        srv.ok = True
+        assert tier3.firewall_ok(f"unix://{sock}") == (True, "x")
+        srv.ok = False
+        assert tier3.firewall_ok(f"unix://{sock}") == (False, "x")
+    finally:
+        srv.shutdown()
+        sock.unlink()
+    assert seen == ["/_evalskills/firewall"] * 2
+    ok, why = tier3.firewall_ok(f"unix://{tmp_path}/absent.sock")
+    assert not ok and "did not answer" in why
 
 
 def skill(tmp_path, with_evals=True):

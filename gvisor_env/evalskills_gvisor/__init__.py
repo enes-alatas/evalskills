@@ -35,6 +35,7 @@ import socket
 import subprocess
 import tarfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from harbor.environments.definition import should_use_prebuilt_docker_image
@@ -47,6 +48,18 @@ RUNTIME = "runsc"
 NO_DNS = ("127.0.0.1",)
 BUILD_ROUTE = "/_evalskills/build"
 UNSUPPORTED_BUILD = "gvisor env mode: unsupported environment"
+UNSUPPORTED_FILE_ENV = "EVALSKILLS_UNSUPPORTED_FILE"  # pipeline/tier3.py sets it
+# SkillEvaluator lets a backend forward no DOCKER_* variable to Harbor, so the proxy's socket comes under our own
+# name and becomes DOCKER_HOST inside Harbor's process (#143 review). Docker's default socket is never used.
+SOCKET_ENV = "EVALSKILLS_DOCKER_SOCKET"
+DEFAULT_SOCKET = "/run/evalskills/docker.sock"
+
+
+def proxy_socket() -> str:
+    path = os.environ.get(SOCKET_ENV) or DEFAULT_SOCKET
+    if not os.path.isabs(path) or path.endswith("/docker.sock") and path.startswith(("/var/run/", "/run/docker")):
+        raise RuntimeError(f"gvisor env mode: {SOCKET_ENV} must be the socket proxy's absolute path")
+    return path
 
 
 class _Unix(http.client.HTTPConnection):
@@ -85,6 +98,9 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs["kata_runtime"] = RUNTIME
         kwargs["kata_dns"] = NO_DNS
+        # before anything talks to Docker: the trusted client and Compose read DOCKER_HOST from this process
+        os.environ["DOCKER_HOST"] = "unix://" + proxy_socket()
+        os.environ.pop("DOCKER_CONTEXT", None)
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -151,10 +167,7 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
             raise RuntimeError(f"gvisor env mode refused the trial: services not pinned to runsc: {', '.join(missing)}")
 
     def _proxy_socket(self) -> str:
-        host = self._trusted_docker_client_environment().get("DOCKER_HOST") or os.environ.get("DOCKER_HOST", "")
-        if not host.startswith("unix://"):
-            raise RuntimeError("gvisor env mode needs DOCKER_HOST=unix://<the Docker socket proxy> to build")
-        return host.removeprefix("unix://")
+        return proxy_socket()
 
     def _build_through_proxy(self) -> str:
         """Send the build context to the proxy, which writes and runs the build itself. → the image tag."""
@@ -174,6 +187,8 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
         finally:
             conn.close()
         if resp.status == 403:
+            if mark := os.environ.get(UNSUPPORTED_FILE_ENV):  # the runner's evidence; a skill can't write it
+                Path(mark).write_text(json.dumps({"message": str(doc.get("message", "refused"))[:500]}))
             raise RuntimeError(f"{UNSUPPORTED_BUILD}: {doc.get('message', 'refused')}")
         if resp.status != 200 or not isinstance(doc.get("tag"), str):
             raise RuntimeError(f"gvisor env mode: the build failed ({resp.status}): {doc.get('message', '')}")
@@ -207,5 +222,9 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
 SPEC = EnvironmentBackendSpec(
     import_path="evalskills_gvisor:GvisorEnvironment",
     supports_docker_compose=True,
+    # SkillEvaluator gives Harbor only its base variables plus these (#143 review); pipeline/tier3.py sets both and
+    # refuses a trial user that could open Docker's own socket.
+    host_env_vars=frozenset({SOCKET_ENV, UNSUPPORTED_FILE_ENV}),
+    host_path_env_vars=frozenset({SOCKET_ENV, UNSUPPORTED_FILE_ENV}),
     install_hint="install evalskills' gvisor_env package next to SkillEvaluator: uv run --with-editable ./gvisor_env",
 )

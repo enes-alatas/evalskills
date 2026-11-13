@@ -54,14 +54,17 @@ Prerequisites on the host: this repository, `uv`, and a SkillEvaluator checkout 
 
 ```
 python3 -I pipeline/live_pilot.py --dry-run          # the 16 planned runs; nothing starts
-DOCKER_HOST=unix:///run/docker-evals.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \
+DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \
 TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \
 python3 -I pipeline/live_pilot.py --only obra__superpowers__skills__systematic-debugging   # one skill first
 ```
 
-`tier3.py` refuses to start on the main daemon, with a real provider key in its environment, or without a token.
-A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, and one with no comparable
-cases as `inconclusive`. Neither gets a score.
+`tier3.py` refuses to start anywhere but the socket proxy with `--env-mode gvisor`, while the proxy reports the
+trial firewall missing, with a real provider key in its environment, or without a token. SkillEvaluator runs as the
+trial user (`TIER3_TRIAL_USER`, default `evals`) in a fresh folder under `TIER3_RUN_ROOT` (`/srv/evals/run`), and
+root copies the report's plain files to `reports/` when the trial ends (ADR-0003, amended 2026-11-13).
+A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable
+cases as `inconclusive`, and one whose Dockerfile the proxy refuses as `unsupported`. None of them gets a score.
 
 ## Known limits
 - Trial-to-gateway traffic is plain HTTP on the local bridge. The per-run token crosses it, and it is worthless
