@@ -63,6 +63,15 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - `cache/`, `sources/` and `reports/` hold third-party clones and raw reports. They are gitignored and never committed.
   Only sanitized `report.public.json` files are published.
 
+## Shared hosts
+- The VPS runs other services. Every step that installs, starts, stops or reconfigures anything on it is announced
+  to Enes before it runs, who passes it to the host's operator: what it touches, how to check it, and how to undo it.
+  Loops don't run host steps themselves; the operator does, in an agreed window.
+- A change that can affect the host's other services (Docker daemons, firewall rules, network interfaces, systemd
+  units) is tested on a throwaway machine first, or run in a window where an outage is acceptable. It needs a
+  before/after check: an `iptables-save` diff, and the other containers still up.
+- After an outage, stop and redesign; don't patch and retry. Never run a second dockerd on the shared host (#137).
+
 ## Results and scoring
 - Scores come only from the pipeline. They are never hand-edited, estimated or mocked. A fixture score is visibly
   labelled as a fixture.
