@@ -537,7 +537,11 @@ def test_bad_config_is_refused(raw_cfg):
 
 def test_example_config_loads():
     path = Path(__file__).resolve().parents[1] / "deploy" / "gvisor" / "docker-proxy.example.json"
-    cfg = dp.load_config(json.loads(path.read_text()))
+    raw = json.loads(path.read_text())
+    assert raw["builds"]["allowed_dockerfiles"].endswith("/deploy/gvisor/build/allowed-dockerfiles.txt")
+    raw["builds"]["allowed_dockerfiles"] = str(path.parent / "build" / "allowed-dockerfiles.txt")  # the checkout's
+    cfg = dp.load_config(raw)
+    assert len(cfg["builds"]["allowlist"]) == 4
     assert cfg["bind_root"] == "/srv/evals/run" and cfg["network_pool"].subnet_of(cfg["firewall_scope"])
 
 

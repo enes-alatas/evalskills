@@ -8,5 +8,13 @@
   "network_prefix": 28,
   "firewall_scope": "172.31.240.0/20",
   "iptables": "/usr/sbin/iptables",
-  "idle_timeout_s": 1800
+  "idle_timeout_s": 1800,
+  "builds": {
+    "allowed_dockerfiles": "/opt/evalskills/deploy/gvisor/build/allowed-dockerfiles.txt",
+    "base_image": "evalskills/trial-base:d136a597",
+    "base_image_id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "max_bytes": 268435456,
+    "max_files": 20000,
+    "timeout_s": 900
+  }
 }

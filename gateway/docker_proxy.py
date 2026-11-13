@@ -46,9 +46,32 @@ import socketserver
 import stat
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # run with -I: our own folder only (root-owned on the host)
+import docker_build  # noqa: E402
+
+BUILD_DEFAULTS = {
+    "allowed_dockerfiles": None,  # deploy/gvisor/build/allowed-dockerfiles.txt as installed
+    "base_image": None,  # the trial base's tag, as in every final Dockerfile's FROM line
+    "base_image_id": None,  # its image ID once loaded on the host (sha256:…); the build refuses any other
+    "max_bytes": 256 * 1024 * 1024,
+    "max_files": 20000,
+    "timeout_s": 900,
+}
+BUILD_HEADERS = {
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "content-type",
+    "user-agent",
+    "accept",
+    "connection",
+    "accept-encoding",
+}
 
 DEFAULTS = {
     "listen": "/run/evalskills/docker.sock",
@@ -61,6 +84,7 @@ DEFAULTS = {
     "firewall_scope": "172.31.240.0/20",
     "iptables": "iptables",
     "idle_timeout_s": 1800,  # longer than a trial (900 s cap, #118): an agent may print nothing until it ends
+    "builds": None,  # see BUILD_DEFAULTS; null = the build endpoint answers 503
 }
 OWNER_LABEL = "io.evalskills.owned"
 RUNTIME = "runsc"
@@ -115,7 +139,29 @@ def load_config(raw: dict) -> dict:
         raise ConfigError("network_pool must lie inside firewall_scope")
     if not cfg["network_pool"].prefixlen <= cfg["network_prefix"] <= 30:
         raise ConfigError("network_prefix must split network_pool into networks of at least 4 addresses")
+    if cfg["builds"] is not None:
+        cfg["builds"] = load_build_config(cfg["builds"])
     return cfg
+
+
+def load_build_config(raw: dict) -> dict:
+    if not isinstance(raw, dict) or set(raw) - set(BUILD_DEFAULTS):
+        raise ConfigError(f"builds may only set: {', '.join(BUILD_DEFAULTS)}")
+    b = {**BUILD_DEFAULTS, **raw}
+    if not isinstance(b["base_image"], str) or not re.fullmatch(
+        r"[a-z0-9][a-z0-9._/-]*:[A-Za-z0-9._-]+", b["base_image"]
+    ):
+        raise ConfigError("builds.base_image must be a repo:tag")
+    if not isinstance(b["base_image_id"], str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", b["base_image_id"]):
+        raise ConfigError("builds.base_image_id must be the loaded image's sha256 ID")
+    for k in ("max_bytes", "max_files", "timeout_s"):
+        if not isinstance(b[k], int) or b[k] <= 0:
+            raise ConfigError(f"builds.{k} must be a positive integer")
+    try:
+        b["allowlist"] = docker_build.load_allowlist(Path(b["allowed_dockerfiles"]), b["base_image"])
+    except (OSError, TypeError, ValueError) as e:
+        raise ConfigError(f"builds.allowed_dockerfiles: {e}") from e
+    return b
 
 
 # ---------------------------------------------------------------- upstream
@@ -854,6 +900,8 @@ class Handler(socketserver.BaseRequestHandler):
                 + body
             )
             return
+        if path == "/_evalskills/build":
+            return self.serve_build(client, buf, head, query)
         action, kind, ident, bare = route(head.method, path)
         if kind == "exec":
             if not self.policy.daemon.owned("container", self.policy.daemon.exec_container(ident)):
@@ -929,6 +977,46 @@ class Handler(socketserver.BaseRequestHandler):
                 pipe(client, up, self.cfg["idle_timeout_s"], both=False)
         finally:
             up.close()
+
+    def serve_build(self, client, buf, head: Head, query: str) -> None:
+        """The client sends only the context. Anything else it adds is refused, not dropped (#137)."""
+        b = self.cfg["builds"]
+        if head.method != "POST":
+            raise Refused("builds are POST only", 405)
+        if query or "?" in head.target:
+            raise Refused("builds take no query parameters", 400)
+        extra = sorted({k.lower() for k, _ in head.headers} - BUILD_HEADERS)
+        if extra:
+            raise Refused(f"builds take no {extra[0]} header", 400)
+        # http.client sends ``Accept-Encoding: identity`` by itself; any other value asks for a compressed reply
+        if any(k.lower() == "accept-encoding" and v.strip().lower() != "identity" for k, v in head.headers):
+            raise Refused("builds take no accept-encoding header other than identity", 400)
+        if (head.get("content-type") or "application/x-tar") != "application/x-tar":
+            raise Refused("the build context must be application/x-tar", 400)
+        if b is None:
+            raise Refused("builds are not configured on this proxy", 503)
+        try:
+            with docker_build.spool(body_chunks(client, buf, head), b["max_bytes"]) as src:
+                with tempfile.NamedTemporaryFile(prefix="evalskills-build-", suffix=".tar") as ctx:
+                    sha = docker_build.prepare_context(src, ctx, b["allowlist"], max_files=b["max_files"])
+                    ctx.flush()
+                    log("build", dockerfile=sha[:12])
+                    result = docker_build.build(
+                        Path(ctx.name),
+                        upstream=self.cfg["upstream"],
+                        base_image=b["base_image"],
+                        base_image_id=b["base_image_id"],
+                        timeout=b["timeout_s"],
+                    )
+        except docker_build.BuildError as e:
+            raise Refused(str(e), e.code) from e
+        log("built", dockerfile=sha[:12], tag=result["tag"])
+        body = json.dumps(result).encode()
+        client.sendall(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
 
     def check_network_attach(self, body: dict) -> dict:
         _only(body, {"Container": None, "EndpointConfig": None, "Force": _bools_false}, "NetworkConnect")
