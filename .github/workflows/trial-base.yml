@@ -70,7 +70,7 @@ jobs:
             --arg ref "$GITHUB_REF" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg artifact "$ARTIFACT" \
-            --argjson loadable "$([ "$ARTIFACT" = trial-base ] && echo true || echo false)" \
+            --argjson loadable "$([ "$ARTIFACT" = trial-base ] && [ "$pinned" = committed ] && echo true || echo false)" \
             --arg builder_docker "$(docker version --format '{{.Server.Version}}')" \
             '$ARGS.named' > out/trial-base.json
           cat out/trial-base.json

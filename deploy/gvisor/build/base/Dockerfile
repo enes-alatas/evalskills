@@ -4,7 +4,7 @@
 # builds then start FROM this image and run only the template's fixed steps, with --network none.
 #
 # Build it off-host, on a machine with Docker, and load it on the host. See ../README.md. Never build it on the host.
-FROM python:3.12-slim@sha256:0000000000000000000000000000000000000000000000000000000000000000
+FROM python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 RUN apt-get -o Acquire::Retries=3 update && \
     apt-get -o Acquire::Retries=3 install -y --no-install-recommends \
