@@ -6,8 +6,11 @@
 Elsewhere (CI, the plain test run) it is skipped."""
 
 import asyncio
+import io
 import json
 import subprocess
+import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -127,10 +130,81 @@ def test_an_included_service_is_refused_before_start(monkeypatch, tmp_path):
     assert stopped == []  # refused before anything was created
 
 
-def test_a_build_is_refused_before_start(monkeypatch, tmp_path):
-    """Builds run on the host's BuildKit under runc; this mode needs a prebuilt image."""
-    err, stopped = started(monkeypatch, tmp_path, lambda e: pytest.fail("must not start"), env(tmp_path, image=None))
-    assert err is not None and "would build an image" in str(err) and stopped == []
+def test_a_build_goes_through_the_proxy_and_becomes_the_prebuilt_image(monkeypatch, tmp_path):
+    """#137 PR B: Compose never builds; the proxy builds the allowlisted Dockerfile and returns a tag."""
+    e = env(tmp_path, image=None)
+    original = e.task_env_config
+    seen = {}
+
+    async def harbor_start(self, force_build):
+        seen["force_build"], seen["image"] = force_build, self._env_vars.prebuilt_image_name
+
+    monkeypatch.setattr(SkillEvaluatorSecureDockerEnvironment, "start", harbor_start)
+    monkeypatch.setattr(g.GvisorEnvironment, "_build_through_proxy", lambda self: "evalskills-trial:abc")
+    monkeypatch.setattr(g.GvisorEnvironment, "_project_runtimes", lambda self: {"/main": "runsc"})
+    asyncio.run(e.start(force_build=True))
+    assert seen == {"force_build": False, "image": "evalskills-trial:abc"}
+    assert e.task_env_config.docker_image == "evalskills-trial:abc"
+    assert original.docker_image is None  # the task's own config is copied, not changed
+
+
+def test_a_refused_build_is_reported_as_unsupported(monkeypatch, tmp_path):
+    e = env(tmp_path, image=None)
+
+    class Resp:
+        status = 403
+
+        def read(self, n):
+            return b'{"message": "the Dockerfile is not on the allowlist"}'
+
+    class Conn:
+        def __init__(self, *a, **k):
+            pass
+
+        def request(self, method, target, body, headers):
+            assert target == g.BUILD_ROUTE and set(headers) == {"Host", "Content-Type", "Content-Length"}
+            names = tarfile.open(fileobj=io.BytesIO(body)).getnames()
+            assert names == ["Dockerfile"]
+
+        def getresponse(self):
+            return Resp()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(g, "_Unix", Conn)
+    monkeypatch.setattr(g.GvisorEnvironment, "_proxy_socket", lambda self: "/run/evalskills/docker.sock")
+    with pytest.raises(RuntimeError, match="unsupported environment"):
+        e._build_through_proxy()
+
+
+def test_a_real_build_goes_from_the_environment_to_the_proxy_handler(monkeypatch, tmp_path):
+    """No stubbed request(): GvisorEnvironment's own HTTP client against the real proxy Handler (#142 review)."""
+    sys.path.insert(0, str(Path(__file__).parent))
+    import test_docker_build as tdb
+
+    e = env(tmp_path, image=None)
+    (e.environment_dir / "Dockerfile").write_bytes(tdb.ORIGINAL)
+    (e.environment_dir / "skills").mkdir()
+    (e.environment_dir / "skills" / "SKILL.md").write_text("hi")
+    with tdb.running_proxy(tmp_path / "proxy") as p:
+        monkeypatch.setattr(g.GvisorEnvironment, "_proxy_socket", lambda self: p["sock"])
+        tag = e._build_through_proxy()
+        [(_, body)] = p["state"]["builds"]
+    assert tag.startswith(tdb.db.TAG_REPO + ":")
+    with tarfile.open(fileobj=io.BytesIO(body)) as t:
+        assert t.extractfile(tdb.db.FINAL_NAME).read() == tdb.FINAL
+        assert t.extractfile("skills/SKILL.md").read() == b"hi"
+
+
+def test_the_context_tar_keeps_links_as_links(tmp_path):
+    d = tmp_path / "ctx"
+    (d / "skills").mkdir(parents=True)
+    (d / "Dockerfile").write_text("FROM scratch\n")
+    (d / "skills" / "l").symlink_to("/etc/shadow")
+    with tarfile.open(fileobj=io.BytesIO(g.context_tar(d))) as t:
+        m = t.getmember("skills/l")
+        assert m.issym() and m.linkname == "/etc/shadow"
 
 
 def test_the_check_after_start_asks_the_trusted_daemon(monkeypatch, tmp_path):

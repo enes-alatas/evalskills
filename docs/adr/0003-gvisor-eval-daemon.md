@@ -65,3 +65,25 @@ estimated) remain an option, but cost money per run.
 - Still to come before any live run, each in its own PR: a socket proxy between Harbor and the daemon, which refuses
   non-runsc, privileged, host-mounting and build calls; a boot unit for `firewall.sh`; and the gateway and proxy on a
   dedicated address. Until then `pipeline/tier3.py` refuses to start.
+
+**Amendment (2026-11-13, #137): trial images are built by the socket proxy.**
+- Agreed by the host's operator, relayed by Enes on 2026-11-13. SkillEvaluator builds an image per trial, because the
+  skill's files are copied into it. So instead of refusing every build, the trial sends its build context to the
+  proxy's `POST /_evalskills/build`, and the proxy writes the build itself (`gateway/docker_build.py`). The pass-through
+  `/build`, `/session` and `/grpc` stay refused: Compose v2 builds through BuildKit's session, which a `/build` check
+  would never see.
+- Only an allowlisted Dockerfile is built. `deploy/gvisor/build/allowed-dockerfiles.txt` maps the sha256 of each
+  Dockerfile that the pinned SkillEvaluator generates to a committed final Dockerfile: `FROM` the trial base image,
+  then the template's fixed steps. The proxy adds that file under its own name and never rewrites anything. For the
+  10 pilot skills there are exactly 4 originals, one per task shape, with nothing skill-specific in them. A custom
+  environment, or a skill's `requirements.txt` or `apt-packages.txt`, gives another sha256 and is unsupported.
+- The template's apt and pip installs live in the trial base image (`deploy/gvisor/build/base/`, pip pinned by hash).
+  It's built off-host and loaded by image ID, which the proxy checks before every build. Trial builds run with
+  `networkmode=none` and `pull=0`.
+- **Docker upgrades must be checked against this.** The proxy uses Docker's legacy builder (`version=1`). If a Docker
+  release removes it, builds fail with an error, and there is no BuildKit fallback. Before upgrading Docker on the
+  host, check that `version=1` builds still work. If they don't, this amendment needs a replacement.
+- Build `RUN` steps still execute under the daemon's default runtime (runc). Those are only the template's fixed
+  commands. The skill's files are present but never run. Accepted on #137.
+- The SkillEvaluator repin procedure now includes regenerating the allowlist (`scripts/gvisor_dockerfiles.py`) and
+  reviewing the diff.
