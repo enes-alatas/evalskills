@@ -14,6 +14,8 @@ gvisor_env/*
 pipeline/export_catalog.py
 # What runs with the repo's token, and the guards themselves.
 .github/workflows/*
+scripts/community_reply.py
+.github/community-reply.md
 scripts/skill_gate.py
 .github/security-review-paths
 scripts/secret-scan.sh
