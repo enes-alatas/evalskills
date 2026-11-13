@@ -17,7 +17,7 @@ expected.
 
 ## What happens next
 
-Within one working day, the team:
+A reply comes at once, automatically, saying what follows. Then, within one working day, the team:
 
 1. reproduces the problem, or asks you for what is missing;
 2. gives the issue a type (bug, improvement, and so on) and, for a bug, a severity;

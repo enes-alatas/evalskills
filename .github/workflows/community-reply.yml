@@ -1,0 +1,48 @@
+# Posts one fixed first reply on a report from outside the team (#146): an issue opened with the `community` label,
+# which the "Report a problem" form presets. The reply is .github/community-reply.md, word for word, and echoes
+# nothing of the report (untrusted input). scripts/community_reply.py looks for the reply's marker first, so a
+# re-run or a dispatch posts nothing twice. Edits and reopens don't trigger it.
+#
+# It runs on issue events with `issues: write` (Enes, 2026-11-13, on #146; docs/CONVENTIONS.md, CI). An issue
+# event always runs the default branch's copy of this file and scripts, never a branch's.
+#
+# workflow_dispatch is the drill: PR CI never fires an issue event, so a maintainer proves it after the merge by
+# dispatching it against a test issue. Anyone with write access can already post this comment by hand.
+name: community-reply
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: issue number to reply on (it must carry the community label)
+        required: true
+
+# An explicit block is the whole grant: checkout needs contents: read on a private repo.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: community-reply-${{ github.event.issue.number || inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  reply:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.issue.labels.*.name, 'community')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            .github/community-reply.md
+            scripts/community_reply.py
+          sparse-checkout-cone-mode: false
+      - name: Post the fixed reply once
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+        run: python3 -I scripts/community_reply.py --repo "$GITHUB_REPOSITORY" --issue "$ISSUE"

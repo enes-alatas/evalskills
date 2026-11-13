@@ -88,8 +88,12 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - A change to ranking or score interpretation updates `docs/METHODOLOGY.md` in the same PR.
 
 ## CI
-- Workflows trigger on `pull_request` and `push`, never `pull_request_target`. They declare least-privilege
-  `permissions:`, pin actions by commit SHA (Dependabot bumps them), and use no secrets.
+- Workflows trigger on `pull_request`, `push` and `workflow_dispatch`, never `pull_request_target`. They declare
+  least-privilege `permissions:`, pin actions by commit SHA (Dependabot bumps them), and use no secrets.
+- One exception, approved by Enes on #146: `community-reply` runs on `issues: opened` with `issues: write`, to post
+  the fixed `.github/community-reply.md` once on a `community` issue. It never interpolates issue text into a step,
+  and nothing from the report goes into what it posts. Another workflow on issue or comment events needs the same
+  approval.
 - CI never executes a submitted skill and never calls a model.
 - The repo's own skills (`.claude/skills/`) carry `metadata.author` and pass SkillEvaluator Tier 1 in the `skills`
   workflow: quality at least 80, every validator passed except the advisory Schema & Repository Governance and
