@@ -1,0 +1,12 @@
+{
+  "listen": "/run/evalskills/docker.sock",
+  "listen_group": "evalskills",
+  "upstream": "/var/run/docker.sock",
+  "bind_root": "/srv/evals/run",
+  "eval_uid": 10010,
+  "network_pool": "172.31.240.0/21",
+  "network_prefix": 28,
+  "firewall_scope": "172.31.240.0/20",
+  "iptables": "/usr/sbin/iptables",
+  "idle_timeout_s": 1800
+}
