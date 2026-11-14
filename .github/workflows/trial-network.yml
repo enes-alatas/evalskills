@@ -84,21 +84,7 @@ jobs:
           for svc in evalskills-gateway:8443 evalskills-egress-proxy:3128; do
             name=${svc%:*}
             fwd=$(docker exec "$name" cat /proc/sys/net/ipv4/ip_forward)
-            socks=$(docker exec "$name" python3 -I -c '
-          out = set()
-          for f in ("tcp", "tcp6", "udp", "udp6"):
-              try:
-                  rows = open(f"/proc/net/{f}").read().splitlines()[1:]
-              except OSError:
-                  continue
-              for r in rows:
-                  p = r.split()
-                  addr, port = p[1].split(":")
-                  if addr == "0B00007F":  # 127.0.0.11, the embedded DNS of Docker, on loopback: not reachable from outside
-                      continue
-                  if f.startswith("udp") or p[3] == "0A":  # every UDP socket; TCP in LISTEN
-                      out.add(f"{f}:{int(port, 16)}")
-          print(" ".join(sorted(out)))')
+            socks=$(docker exec -i "$name" python3 -I - < .github/trial-network/sockets.py)
             echo "$name: ip_forward=$fwd sockets=[$socks]"
             test "$fwd" = 0
             test "$socks" = "tcp:${svc#*:}"
@@ -108,6 +94,7 @@ jobs:
           sudo install -d -m 0755 /tmp/evp /tmp/evp/run
           printf '{"listen": "/tmp/evp/p.sock", "listen_group": "", "upstream": "/var/run/docker.sock", "bind_root": "/tmp/evp/run", "eval_uid": %s}\n' \
             "$(id -u)" > "$RUNNER_TEMP/proxy.json"
+          # shellcheck disable=SC2024  # the log belongs to the runner user, so the redirect runs as that user on purpose
           sudo nohup python3 -I gateway/docker_proxy.py --config "$RUNNER_TEMP/proxy.json" > "$RUNNER_TEMP/proxy.log" 2>&1 &
           for _ in $(seq 20); do [ -S /tmp/evp/p.sock ] && break; sleep 0.5; done
           test -S /tmp/evp/p.sock
