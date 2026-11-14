@@ -19,6 +19,8 @@ scripts/community_reply.py
 scripts/skill_gate.py
 .github/security-review-paths
 scripts/secret-scan.sh
+scripts/check.sh
+scripts/hooks/*
 scripts/security-paths.sh
 scripts/deploy-smoke.sh
 .gitleaks.toml

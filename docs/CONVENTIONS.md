@@ -64,7 +64,7 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - Fixtures are synthetic (`sk-test-0000-not-a-real-key`). Screenshots come from the fixture catalog, never from a
   live admin view.
 - `scripts/secret-scan.sh` runs gitleaks over the lines a branch adds. CI runs the same script on every PR, and
-  `scripts/pre-commit` runs it before each commit (`ln -s ../../scripts/pre-commit .git/hooks/pre-commit`).
+  the pre-commit hook runs it on what is staged (see "Local checks").
 - A live credential in front of you is an incident: stop, don't copy it, redact what you can, and tell Enes
   privately (`.claude/skills/credential-incident/`).
 - `cache/`, `sources/` and `reports/` hold third-party clones and raw reports. They are gitignored and never committed.
@@ -103,6 +103,22 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - A PR touching a path in `.github/security-review-paths` is labelled `needs-security-review` and waits for a
   security review comment at its head.
 
+## Local checks
+- **Fail locally, not in CI.** A check that needs no Docker, root or network runs before the push, in the same script
+  CI calls: `scripts/check.sh` (secret scan, commit subjects, shellcheck, actionlint, `ruff check`, `ruff format`,
+  pytest). A new check of that kind goes into `scripts/check.sh`, never only into a workflow.
+- **Install the hooks once per clone:** `scripts/install-hooks.sh`. `pre-commit` scans the staged lines and lints the
+  staged Python, `commit-msg` checks the subject, and `pre-push` runs `scripts/check.sh`. A missing tool warns and
+  is skipped locally, and fails in CI. `git push --no-verify` is for a push the checks can't judge, never a red one.
+- **Never push `wip:` or `fixup!` commits to a PR branch.** Fold them first (`GIT_SEQUENCE_EDITOR=true git rebase -i
+  --autosquash origin/main`). An experiment that needs CI's runner goes on a `diag/<topic>` branch without a PR, or
+  in a draft PR whose commits are already valid.
+- **No inline Python in a workflow beyond one line.** It goes in `.github/<workflow>/*.py` (or `scripts/`), where ruff
+  and the hooks see it. Shell in `run:` blocks is checked by actionlint with shellcheck.
+- Tool versions are pinned in `scripts/check.sh`, and `ci.yml` installs exactly those, checksum-verified.
+- **Never commit or push from a checkout of a pull request from outside the team.** The hooks are links into the
+  working tree, so they would run that branch's `scripts/hooks/` and `scripts/check.sh`, tests included.
+
 ## Code
 - Python ≥ 3.11, stdlib-first. `ruff check` and `ruff format` are CI-gated. Tests use pytest.
 - Run Python that reads downloaded or untrusted files with `-I`.
@@ -111,7 +127,7 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
   without it.
 
 ## Definition of done
-`ruff check`, `ruff format --check`, `pytest` and `scripts/secret-scan.sh` pass locally. Docs of record (README,
+`scripts/check.sh` passes locally (the pre-push hook runs it). Docs of record (README,
 METHODOLOGY, ADRs) are updated in the same PR. The template is filled.
 
 ## Screenshots

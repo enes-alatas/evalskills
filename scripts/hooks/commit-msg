@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Checks the message being written against the rule CI applies (scripts/commit-subjects.sh), so a bad subject is
+# refused at commit time. fixup!, squash! and amend! commits are allowed here because autosquash needs them; the
+# pre-push hook and CI refuse them, so they never reach a PR branch. Installed by scripts/install-hooks.sh.
+set -euo pipefail
+root="$(git rev-parse --show-toplevel)"
+# `git commit -v` appends the diff below a scissors line; it isn't part of the message.
+message="$(sed '/^# -\{24\} >8 -\{24\}$/,$d' "$1" | grep -v '^#' || true)"
+message="${message#"${message%%[![:space:]]*}"}"
+case "$message" in
+  "fixup! "* | "squash! "* | "amend! "* | "Merge "*) exit 0 ;;
+esac
+printf '%s\0' "$message" | "$root/scripts/commit-subjects.sh" --stdin

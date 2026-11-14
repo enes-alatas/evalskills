@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Before each commit: the secret scan on what is staged, and ruff on the staged Python files.
+# Installed by scripts/install-hooks.sh. A missing tool warns and lets the commit through; CI still runs the check.
+set -uo pipefail
+root="$(git rev-parse --show-toplevel)"
+cd "$root" || exit 1
+fail=0
+if command -v "${GITLEAKS:-gitleaks}" >/dev/null; then
+  scripts/secret-scan.sh --staged || fail=1
+else
+  echo "pre-commit: WARNING: gitleaks not found, so the secret scan is skipped. CI still runs it." >&2
+fi
+mapfile -d '' -t py < <(git diff --cached --name-only --diff-filter=ACMR -z -- '*.py')
+if ((${#py[@]})); then
+  ruff=()
+  if command -v ruff >/dev/null; then ruff=(ruff); elif command -v uvx >/dev/null; then ruff=(uvx -q ruff@0.17.4); fi
+  if ((${#ruff[@]})); then
+    # ruff reads the working tree; a partly staged file is checked as it is on disk.
+    "${ruff[@]}" check -- "${py[@]}" || fail=1
+    "${ruff[@]}" format --check -- "${py[@]}" || fail=1
+  else
+    echo "pre-commit: WARNING: ruff not found, so lint is skipped. CI still runs it." >&2
+  fi
+fi
+exit "$fail"

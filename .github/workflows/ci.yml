@@ -17,6 +17,10 @@ concurrency:
 env:
   GITLEAKS_VERSION: 8.30.1
   GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  ACTIONLINT_VERSION: 1.7.12
+  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+  SHELLCHECK_VERSION: 0.11.0
+  SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
 
 jobs:
   checks:
@@ -36,22 +40,24 @@ jobs:
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tgz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+      - name: install actionlint and shellcheck, checksum-verified
+        run: |
+          curl -sSfL -o /tmp/actionlint.tgz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tgz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tgz -C /usr/local/bin actionlint
+          curl -sSfL -o /tmp/shellcheck.tgz \
+            "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tgz" | sha256sum -c -
+          tar -xzf /tmp/shellcheck.tgz -C /tmp
+          install -m 0755 "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
       - name: install lint and test tools
         run: python -m pip install --disable-pip-version-check -q ruff==0.17.4 pytest==9.2.0
       - name: the guards still catch what they claim to
-        run: python -m pytest -q tests/test_guards.py
-      - name: scan the commits this change adds for secrets
+        run: python -m pytest -q tests/test_guards.py tests/test_hooks.py
+      # Everything else is scripts/check.sh, which the pre-push hook runs too.
+      - name: secret scan, commit subjects, shellcheck, actionlint, ruff and tests
         env:
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-        run: scripts/secret-scan.sh
-      - name: commit subjects
-        if: github.event_name == 'pull_request'
-        env:
-          BASE: origin/${{ github.base_ref }}
-        run: scripts/commit-subjects.sh
-      - name: ruff check
-        run: ruff check .
-      - name: ruff format
-        run: ruff format --check .
-      - name: tests
-        run: python -m pytest -q
+          SUBJECTS: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+        run: scripts/check.sh

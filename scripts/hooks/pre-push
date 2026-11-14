@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Before a push: scripts/check.sh, the same checks the `ci` job runs. Installed by scripts/install-hooks.sh.
+# A push to a diag/* branch skips the commit subject check, since such branches never open a PR.
+# The checks see the working tree at HEAD, so a push of anything else is checked by CI only. Skip once with
+# `git push --no-verify`.
+set -uo pipefail
+root="$(git rev-parse --show-toplevel)"
+head="$(git rev-parse HEAD)"
+zero=0000000000000000000000000000000000000000
+subjects=1 check=0
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+  [[ "$local_sha" == "$zero" ]] && continue # a delete
+  if [[ "$local_sha" != "$head" ]]; then
+    echo "pre-push: WARNING: $remote_ref isn't HEAD, so it isn't checked here. CI checks it." >&2
+    continue
+  fi
+  check=1
+  [[ "$remote_ref" == refs/heads/diag/* ]] && subjects=0
+done
+((check)) || exit 0
+if [[ -n "$(git -C "$root" status --porcelain --untracked-files=no)" ]]; then
+  echo "pre-push: WARNING: uncommitted changes; the checks see them, CI won't." >&2
+fi
+SUBJECTS="$subjects" exec "$root/scripts/check.sh"

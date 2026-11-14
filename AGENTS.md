@@ -35,8 +35,9 @@ it links to the docs rather than repeating them.
 
 ## Commands
 ```
-uvx ruff check . && uvx ruff format --check .     # lint
-python3 -m pytest -q                              # tests
-scripts/secret-scan.sh                            # what CI scans: lines added since origin/main
+scripts/install-hooks.sh                          # once per clone: commit-msg, pre-commit, pre-push
+scripts/check.sh                                  # what CI's checks job runs (--fast skips the tests)
+uvx ruff check . && uvx ruff format --check .     # lint alone
+python3 -m pytest -q                              # tests alone
 python3 -I pipeline/server.py --port 8080         # run locally
 ```
