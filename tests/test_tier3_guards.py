@@ -81,12 +81,12 @@ def test_refuses_an_unreadable_or_empty_token(safe, tmp_path):
         tier3.trial_env(safe, OK)
 
 
-def test_refuses_while_the_proxy_reports_no_firewall(safe):
-    with pytest.raises(tier3.Unsafe, match="firewall is not in place .EVALS-EGRESS does not end in DROP"):
-        tier3.trial_env(safe, lambda: (False, "EVALS-EGRESS does not end in DROP"))
+def test_refuses_while_the_proxy_reports_isolation_broken(safe):
+    with pytest.raises(tier3.Unsafe, match="isolation does not hold .evalskills-gateway may forward"):
+        tier3.trial_env(safe, lambda: (False, "evalskills-gateway may forward"))
 
 
-def test_the_firewall_question_goes_to_the_proxy(tmp_path):
+def test_the_isolation_question_goes_to_the_proxy(tmp_path):
     sock = Path("/tmp") / f"t3fw-{os.getpid()}.sock"
     seen = []
 
@@ -109,14 +109,14 @@ def test_the_firewall_question_goes_to_the_proxy(tmp_path):
     threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
     try:
         srv.ok = True
-        assert tier3.firewall_ok(f"unix://{sock}") == (True, "x")
+        assert tier3.isolation_ok(f"unix://{sock}") == (True, "x")
         srv.ok = False
-        assert tier3.firewall_ok(f"unix://{sock}") == (False, "x")
+        assert tier3.isolation_ok(f"unix://{sock}") == (False, "x")
     finally:
         srv.shutdown()
         sock.unlink()
-    assert seen == ["/_evalskills/firewall"] * 2
-    ok, why = tier3.firewall_ok(f"unix://{tmp_path}/absent.sock")
+    assert seen == ["/_evalskills/isolation"] * 2
+    ok, why = tier3.isolation_ok(f"unix://{tmp_path}/absent.sock")
     assert not ok and "did not answer" in why
 
 

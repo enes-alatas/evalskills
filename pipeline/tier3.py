@@ -10,8 +10,8 @@ cases. A set is accepted only if it is vendored from a public benchmark and carr
 Usage (once unblocked), as the eval user (ADR-0003, amended 2026-11-13):
   DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=... TIER3_GATEWAY_TOKEN_FILE=... \
   python3 -I pipeline/tier3.py OWNER/REPO SKILL_PATH [TASK_SET] [--dry-run]
-It refuses to start anywhere but the Docker socket proxy with --env-mode gvisor, while the proxy reports the trial
-firewall missing, with a real provider key in its environment, or without a gateway token (see trial_env). Each
+It refuses to start anywhere but the Docker socket proxy with --env-mode gvisor, while the proxy reports trial
+isolation broken, with a real provider key in its environment, or without a gateway token (see trial_env). Each
 trial runs in a fresh folder under TIER3_RUN_ROOT (/srv/evals/run), the only place the proxy accepts binds from,
 and its report is moved out of there when it ends.
 """
@@ -74,11 +74,11 @@ class _Unix(http.client.HTTPConnection):
         self.sock.connect(self._path)
 
 
-def firewall_ok(sock: str = EVALS_SOCKET) -> tuple[bool, str]:
-    """Ask the proxy (root) whether the trial firewall is in place; the runner can't read iptables itself."""
+def isolation_ok(sock: str = EVALS_SOCKET) -> tuple[bool, str]:
+    """Ask the proxy whether trial isolation holds (its networks' flags, the services' ip_forward and networks)."""
     conn = _Unix(sock.removeprefix("unix://"))
     try:
-        conn.request("GET", "/_evalskills/firewall", headers={"Host": "docker"})
+        conn.request("GET", "/_evalskills/isolation", headers={"Host": "docker"})
         resp = conn.getresponse()
         doc = json.loads(resp.read(65536) or b"{}")
     except (OSError, ValueError) as e:
@@ -188,10 +188,10 @@ def _as_user(user: pwd.struct_passwd) -> dict:
     return {"user": user.pw_uid, "group": user.pw_gid, "extra_groups": groups}
 
 
-def trial_env(environ=os.environ, firewall=firewall_ok) -> dict:
+def trial_env(environ=os.environ, isolation=isolation_ok) -> dict:
     """The environment for the SkillEvaluator → agent chain, or Unsafe before anything runs or spends.
 
-    ADR-0003 (amended 2026-11-13): trials run only under gVisor, through the socket proxy, behind the firewall.
+    ADR-0003 (amended 2026-11-14): trials run only under gVisor, through the socket proxy, on isolated networks.
     ADR-0004: this chain never holds a real provider key; it gets the model gateway's URL and a per-run token (read
     from a file the gateway issues), as SkillEvaluator's openai-compatible provider."""
     if ENV_MODE != "gvisor":
@@ -210,9 +210,9 @@ def trial_env(environ=os.environ, firewall=firewall_ok) -> dict:
         raise Unsafe(f"refusing: cannot read TIER3_GATEWAY_TOKEN_FILE ({e.strerror})") from e
     if not token:
         raise Unsafe("refusing: TIER3_GATEWAY_TOKEN_FILE is empty")
-    ok, why = firewall()
+    ok, why = isolation()
     if not ok:
-        raise Unsafe(f"refusing: the trial firewall is not in place ({why})")
+        raise Unsafe(f"refusing: trial isolation does not hold ({why})")
     env = ev.git_env()
     env.update(
         {
