@@ -107,6 +107,11 @@ def test_a_marker_in_the_issue_body_does_not_suppress_the_reply_but_one_in_a_com
     assert run_main(monkeypatch, issue, [{"body": cr.MARKER + "\nThanks"}]) == []
 
 
+def test_the_dispatch_default_uses_the_issues_own_association(monkeypatch):
+    issue = {"labels": [{"name": "bug"}], "author_association": "OWNER"}
+    assert run_main(monkeypatch, issue, [], "--author-association", "ISSUE") == []
+
+
 def test_a_pull_request_gets_nothing(monkeypatch):
     pr = {"pull_request": {}, "labels": [{"name": "community"}]}
     assert run_main(monkeypatch, pr, []) == []

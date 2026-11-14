@@ -56,14 +56,18 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--repo", required=True)
     ap.add_argument("--issue", required=True, type=int)
     # A drill (workflow_dispatch) treats a maintainer's test issue as if its author were outside the team.
-    ap.add_argument("--author-association", default="", choices=["", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"])
+    # ISSUE (the dispatch default) and "" (an issue event, with no inputs) both mean the issue's own association.
+    ap.add_argument(
+        "--author-association", default="", choices=["", "ISSUE", "NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR"]
+    )
     args = ap.parse_args(argv)
     base = f"repos/{args.repo}/issues/{args.issue}"
     issue = gh_json(base)
     if "pull_request" in issue:
         print("a pull request, not an issue: nothing to do")
         return 0
-    association = args.author_association or issue.get("author_association") or "NONE"
+    override = "" if args.author_association == "ISSUE" else args.author_association
+    association = override or issue.get("author_association") or "NONE"
     labels = [label["name"] for label in issue.get("labels", [])]
     missing = labels_to_add(association, labels)
     if missing:
