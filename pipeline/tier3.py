@@ -47,6 +47,8 @@ RUN_ROOT = Path(os.environ.get("TIER3_RUN_ROOT", "/srv/evals/run"))  # the proxy
 # gateway token file and moves reports out, so the trial user can read neither the token file nor other runs.
 TRIAL_USER = os.environ.get("TIER3_TRIAL_USER", "evals")
 DAEMON_SOCKETS = (Path("/var/run/docker.sock"), Path("/run/docker.sock"))  # what the trial user must not reach
+# Trial images grow /var/lib/docker on /, outside the capped trial disk (#137, step 2): below this, no trial starts.
+MIN_FREE_ROOT = int(os.environ.get("TIER3_MIN_FREE_ROOT", str(8 * 1024**3)))
 MAX_LOG_BYTES = int(os.environ.get("TIER3_MAX_LOG_BYTES", str(64 * 1024**2)))  # beyond it the trial is stopped
 # RLIMIT_FSIZE on the trial: no file it writes, the log included, grows past this, even between two log checks
 MAX_FILE_BYTES = int(os.environ.get("TIER3_MAX_FILE_BYTES", str(256 * 1024**2)))
@@ -146,6 +148,16 @@ def check_run_root(root: Path, uid: int) -> None:
         raise Unsafe(f"refusing: {root} must be a real folder (TIER3_RUN_ROOT)")
     if root.stat().st_uid != uid:
         raise Unsafe(f"refusing: {root} must belong to the trial user")
+
+
+def check_free_root(path: Path = Path("/"), minimum: int | None = None) -> None:
+    """Refuse a trial while the disk that holds Docker's images has less than TIER3_MIN_FREE_ROOT free."""
+    minimum = MIN_FREE_ROOT if minimum is None else minimum
+    free = shutil.disk_usage(path).free
+    if free < minimum:
+        raise Unsafe(
+            f"refusing: {free // 1024**2} MiB free on {path}, below TIER3_MIN_FREE_ROOT ({minimum // 1024**2} MiB)"
+        )
 
 
 def _hand_over(work: Path, user: pwd.struct_passwd) -> None:
@@ -453,6 +465,7 @@ def run(
     so a later trial can't read an earlier one's files (#137 condition 5). The log never touches that folder."""
     user = trial_user()
     check_run_root(run_root, user.pw_uid)
+    check_free_root()
     with ev.GIT_LOCK:
         repo_dir, commit = ev.checkout(repo, ref)
     work = Path(tempfile.mkdtemp(prefix="t3-", dir=run_root))  # 0700

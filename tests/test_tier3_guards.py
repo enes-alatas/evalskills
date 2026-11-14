@@ -218,3 +218,16 @@ def test_a_linked_grader_is_removed_not_followed(tmp_path):
     out = tier3.prepare(src, None, tmp_path / "out" / "demo")
     assert not (out / "evals" / "grader.py").exists() and not (out / "evals" / "grader.py").is_symlink()
     assert target.is_file()
+
+
+def test_refuses_a_trial_while_the_root_disk_is_low(tmp_path, monkeypatch):
+    """#137: trial images grow /var/lib/docker on /, outside the capped run disk."""
+    free = 3 * 1024**3
+    monkeypatch.setattr(tier3.shutil, "disk_usage", lambda p: type("U", (), {"free": free})())
+    with pytest.raises(tier3.Unsafe, match="TIER3_MIN_FREE_ROOT"):
+        tier3.check_free_root(tmp_path, minimum=8 * 1024**3)
+    tier3.check_free_root(tmp_path, minimum=2 * 1024**3)  # enough: no refusal
+
+
+def test_the_default_minimum_is_8_gb():
+    assert tier3.MIN_FREE_ROOT == 8 * 1024**3 or "TIER3_MIN_FREE_ROOT" in os.environ
