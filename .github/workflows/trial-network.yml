@@ -1,0 +1,124 @@
+# Proves the trial network path end to end on Docker 29.6.1, the host's version (#137), through the real socket proxy
+# (gateway/docker_proxy.py) with runsc. The model gateway and the egress proxy run from deploy/live/compose.yaml, with
+# a synthetic key file; each must listen on its one port and forward nothing. Through the proxy's socket the check then
+# creates two trial networks and a trial on each, as the runner would. The proxy must give each network no address
+# on the host, attach the two services to it, and name them in the trial. The trial must reach the two services and
+# nothing else: not a trial on the other network (both ways), the services' egress side, the host or the internet, and an
+# attacker with NET_ADMIN can't route through either service. Everything
+# runs again after `systemctl restart docker`. No skill code and no model run here.
+name: trial-network
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/trial-network.yml
+      - .github/trial-network/**
+      - gateway/gateway.py
+      - gateway/egress_proxy.py
+      - deploy/live/**
+      - gateway/docker_proxy.py
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_VERSION: 29.6.1
+  IMAGE: evalskills-ci-trial:1
+  ROUTER: evalskills-ci-router:1
+
+jobs:
+  reach:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Docker ${{ env.DOCKER_VERSION }}, the host's version
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+            | sudo tee /etc/apt/sources.list.d/docker.list
+          sudo apt-get update -q
+          v=$(apt-cache madison docker-ce | awk -v want="$DOCKER_VERSION" '$3 ~ "^5:" want "-" {print $3; exit}')
+          test -n "$v"
+          sudo apt-get install -y -q --allow-downgrades "docker-ce=$v" "docker-ce-cli=$v"
+          test "$(docker version --format '{{.Server.Version}}')" = "$DOCKER_VERSION"
+      - name: Install gVisor (runsc) as an extra runtime, as on the host
+        run: |
+          curl -fsSL https://gvisor.dev/archive.key | sudo gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
+            | sudo tee /etc/apt/sources.list.d/gvisor.list
+          sudo apt-get update -q && sudo apt-get install -y -q runsc
+          sudo runsc install -- --platform=systrap
+          sudo systemctl reload docker
+          docker info --format '{{json .Runtimes}}' | grep -q runsc
+      - name: The trial and attacker images, the real services, and a host listener
+        run: |
+          docker pull -q python:3.12-slim
+          mkdir -p "$RUNNER_TEMP/img" "$RUNNER_TEMP/router"
+          cp .github/trial-network/probe.py "$RUNNER_TEMP/img/"
+          printf 'FROM python:3.12-slim\nCOPY probe.py /probe.py\nLABEL io.evalskills.owned=1\n' > "$RUNNER_TEMP/img/Dockerfile"
+          docker build -q -t "$IMAGE" "$RUNNER_TEMP/img"
+          cp .github/trial-network/router.py "$RUNNER_TEMP/router/"
+          printf 'FROM python:3.12-slim\nRUN apt-get update -q && apt-get install -y -q iproute2\nCOPY router.py /router.py\n' \
+            > "$RUNNER_TEMP/router/Dockerfile"
+          docker build -q -t "$ROUTER" "$RUNNER_TEMP/router"
+          # deploy/live/compose.yaml as on the host, with an obviously synthetic key file (no model is ever called)
+          sudo install -d -m 0700 /etc/evalskills/secrets
+          echo "ci-synthetic-not-a-key" | sudo tee /etc/evalskills/secrets/model_key > /dev/null
+          sudo chown 10002:10002 /etc/evalskills/secrets/model_key && sudo chmod 0400 /etc/evalskills/secrets/model_key
+          sudo docker compose -f deploy/live/compose.yaml up -d --build --wait
+          nohup python3 -m http.server --bind 0.0.0.0 9999 >/dev/null 2>&1 &  # a host service no trial may reach
+          sleep 2
+          # control: the host side reaches the gateway at its egress address (step 3's /etc/hosts line points there)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' http://172.31.248.2:8443/v1/models)
+          echo "control: the host reaches the gateway at 172.31.248.2:8443 (HTTP $code without a token)"
+          # control: a container on the default bridge reaches the host listener, so the trial's refusal means something
+          docker run --rm python:3.12-slim python -c '
+          import socket; socket.create_connection(("172.17.0.1", 9999), timeout=4).close(); print("control: docker0:9999 reachable from the default bridge")'
+      - name: Each service listens on its one port, and forwards nothing
+        run: |
+          for svc in evalskills-gateway:8443 evalskills-egress-proxy:3128; do
+            name=${svc%:*}
+            fwd=$(docker exec "$name" cat /proc/sys/net/ipv4/ip_forward)
+            socks=$(docker exec "$name" python3 -I -c '
+          out = set()
+          for f in ("tcp", "tcp6", "udp", "udp6"):
+              try:
+                  rows = open(f"/proc/net/{f}").read().splitlines()[1:]
+              except OSError:
+                  continue
+              for r in rows:
+                  p = r.split()
+                  addr, port = p[1].split(":")
+                  if addr == "0B00007F":  # 127.0.0.11, the embedded DNS of Docker, on loopback: not reachable from outside
+                      continue
+                  if f.startswith("udp") or p[3] == "0A":  # every UDP socket; TCP in LISTEN
+                      out.add(f"{f}:{int(port, 16)}")
+          print(" ".join(sorted(out)))')
+            echo "$name: ip_forward=$fwd sockets=[$socks]"
+            test "$fwd" = 0
+            test "$socks" = "tcp:${svc#*:}"
+          done
+      - name: Start the socket proxy
+        run: |
+          sudo install -d -m 0755 /tmp/evp /tmp/evp/run
+          printf '{"listen": "/tmp/evp/p.sock", "listen_group": "", "upstream": "/var/run/docker.sock", "bind_root": "/tmp/evp/run", "eval_uid": %s}\n' \
+            "$(id -u)" > "$RUNNER_TEMP/proxy.json"
+          sudo nohup python3 -I gateway/docker_proxy.py --config "$RUNNER_TEMP/proxy.json" > "$RUNNER_TEMP/proxy.log" 2>&1 &
+          for _ in $(seq 20); do [ -S /tmp/evp/p.sock ] && break; sleep 0.5; done
+          test -S /tmp/evp/p.sock
+      - name: Trials through the proxy reach the two services and nothing else
+        run: sudo python3 -I .github/trial-network/drive.py /tmp/evp/p.sock "$IMAGE" "$ROUTER" first
+      - name: The same after dockerd restarts
+        run: |
+          sudo systemctl restart docker
+          sleep 3
+          docker ps --format '{{.Names}} {{.Status}}'
+          sudo python3 -I .github/trial-network/drive.py /tmp/evp/p.sock "$IMAGE" "$ROUTER" second
+      - name: The proxy's log
+        if: always()
+        run: cat "$RUNNER_TEMP/proxy.log" || true

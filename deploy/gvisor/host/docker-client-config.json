@@ -1,0 +1,9 @@
+{
+  "proxies": {
+    "default": {
+      "httpProxy": "http://evals-proxy:3128",
+      "httpsProxy": "http://evals-proxy:3128",
+      "noProxy": "evals-gateway,evals-proxy"
+    }
+  }
+}

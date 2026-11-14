@@ -1,5 +1,7 @@
-"""#121/#123: the live pilot's gateway and egress proxy deploy files agree with each other and with the firewall."""
+"""#121/#123: the live pilot's gateway and egress proxy deploy files agree with each other and with the socket proxy."""
 
+import ipaddress
+import json
 import re
 import sys
 from pathlib import Path
@@ -7,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LIVE = ROOT / "deploy" / "live"
 sys.path.insert(0, str(ROOT / "gateway"))
+import docker_proxy as dp  # noqa: E402
 import egress_proxy as ep  # noqa: E402
 
 import gateway as gw  # noqa: E402
@@ -21,13 +24,31 @@ def service(name: str) -> str:
     return m.group(1)
 
 
-def test_configs_load_and_listen_on_the_eval_bridge():
+def test_services_sit_where_the_socket_proxy_and_the_host_look_for_them():
     g = gw.load_config(str(LIVE / "gateway.json"))
     p = ep.load_config(str(LIVE / "egress-proxy.json"))
-    assert g["listen_host"] == p["listen_host"] == "172.31.248.1"  # br-evals, from docker-evals.service
-    assert "172.31.248.1/24" in (ROOT / "deploy" / "gvisor" / "docker-evals.service").read_text()
-    env = (ROOT / "deploy" / "gvisor" / "firewall.env").read_text()
-    assert f"#GATEWAY_PORT={g['listen_port']}" in env and f"#PROXY_PORT={p['listen_port']}" in env
+    # they listen on their own interfaces: the egress network and the trial networks the socket proxy attaches
+    assert g["listen_host"] == p["listen_host"] == "0.0.0.0"
+    assert "network_mode" not in COMPOSE and "ports:" not in COMPOSE  # off host networking, nothing published
+    assert "ipv4_address: 172.31.248.2" in service("gateway")
+    assert "ipv4_address: 172.31.248.3" in service("egress-proxy")
+    assert "subnet: 172.31.248.0/24" in COMPOSE
+    # on the egress network and every trial network: neither may route between them (the anchor applies to both)
+    assert 'sysctls: { net.ipv4.ip_forward: "0" }' in COMPOSE.split("services:")[0]
+    assert "<<: *hardening" in service("gateway") and "<<: *hardening" in service("egress-proxy")
+    proxy_cfg = json.loads((ROOT / "deploy/gvisor/host/docker-proxy.json").read_text())
+    services = {**dp.DEFAULTS["services"], **proxy_cfg.get("services", {})}
+    assert services == {"evals-gateway": "evalskills-gateway", "evals-proxy": "evalskills-egress-proxy"}
+    assert "container_name: evalskills-gateway " in service("gateway")
+    assert "container_name: evalskills-egress-proxy\n" in service("egress-proxy")
+    host = ROOT / "deploy" / "gvisor" / "host"
+    client = (host / "docker-client-config.json").read_text()  # trials reach the proxy by the name the proxy sets
+    assert f"http://evals-proxy:{p['listen_port']}" in client
+    common = (host / "common.sh").read_text()  # step 3 names the gateway's egress address for the host side
+    assert "GATEWAY_ADDR=172.31.248.2 " in common and "GATEWAY_HOST=evals-gateway " in common
+    pool = ipaddress.ip_network(dp.DEFAULTS["network_pool"])
+    assert any(pool.subnet_of(n) for n in p["allowed_clients"])  # the proxy serves trials
+    assert not any(ipaddress.ip_network("172.31.248.0/24").overlaps(n) for n in p["allowed_clients"])  # not the host
 
 
 def test_only_the_gateway_gets_the_key():
@@ -62,9 +83,7 @@ def test_proxy_allowlist_is_download_hosts_only():
 
 
 def test_proxy_serves_the_trial_range_only():
-    import ipaddress
-
     clients = ep.load_config(str(LIVE / "egress-proxy.json"))["allowed_clients"]
-    assert clients == [ipaddress.ip_network("172.31.240.0/20")]  # firewall.sh's scope: trials and the host's own bridge
+    assert clients == [ipaddress.ip_network(dp.DEFAULTS["network_pool"])]  # the trial networks, not the egress one
     app = re.search(r"EVALSKILLS_SUBNET:-([\d./]+)", (ROOT / "deploy" / "compose.yaml").read_text()).group(1)
     assert not any(ipaddress.ip_network(app).overlaps(c) for c in clients)  # the public app never gets the proxy

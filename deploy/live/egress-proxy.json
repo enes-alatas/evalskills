@@ -1,5 +1,5 @@
 {
-  "listen_host": "172.31.248.1",
+  "listen_host": "0.0.0.0",
   "listen_port": 3128,
   "allowed_hosts": [
     "deb.debian.org",
@@ -11,7 +11,7 @@
     "registry.npmjs.org"
   ],
   "allowed_clients": [
-    "172.31.240.0/20"
+    "172.31.240.0/21"
   ],
   "idle_timeout_s": 120
 }

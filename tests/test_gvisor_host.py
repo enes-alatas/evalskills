@@ -1,0 +1,368 @@
+"""#137 (PR C2): the host step scripts in deploy/gvisor/host/, run against stub binaries and a temporary prefix.
+
+Every command a step could change a machine with is a stub that logs its arguments and keeps a little state (users,
+groups, files). Paths go under $EVALS_PREFIX. So these tests never touch the real system, whoever runs them.
+"""
+
+import hashlib
+import io
+import json
+import os
+import subprocess
+import sys
+import tarfile
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+HOST = ROOT / "deploy" / "gvisor" / "host"
+STEPS = sorted(p.name for p in HOST.glob("[1-9]-*.sh") if not p.name.endswith("-undo.sh"))
+READ_ONLY = {"4-check.sh"}  # changes nothing, so it has no undo
+UNDOS = [s.replace(".sh", "-undo.sh") for s in STEPS if s not in READ_ONLY]
+IMAGE_ID = "sha256:" + "ab" * 32  # synthetic
+
+# One stub for every command; its behaviour is picked by the name it was called as.
+STUB = r"""#!/bin/sh
+n=$(basename "$0")
+echo "$n $*" >> "$STUB_LOG"
+S="$STUB_STATE"
+case "$n" in
+  id)
+    case "$1" in
+      -u) echo "${STUB_UID:-0}" ;;
+      -nG) cat "$S/groups_of_$2" 2>/dev/null || echo "$2" ;;
+      *) echo "uid=10010($1)" ;;
+    esac ;;
+  getent)
+    grep -E "^$2:|^[^:]*:[^:]*:$2:" "$S/$1" 2>/dev/null || exit 2 ;;
+  groupadd) echo "$2:x:999:" >> "$S/group" ;;
+  useradd)
+    uid=""; groups=""; name=""
+    while [ $# -gt 0 ]; do
+      case "$1" in --uid) uid=$2; shift ;; --groups) groups=$2; shift ;;
+        --home-dir|--shell|--comment) shift ;; --*) ;; *) name=$1 ;; esac
+      shift
+    done
+    echo "$name:x:$uid:$uid::/var/lib/evals:/usr/sbin/nologin" >> "$S/passwd"
+    echo "$name:x:$uid:" >> "$S/group"
+    echo "$name $groups" > "$S/groups_of_$name"
+    sed -i "s/^$groups:x:999:$/$groups:x:999:$name/" "$S/group" ;;
+  userdel)
+    sed -i "/^$1:/d" "$S/passwd"; sed -i "/^$1:/d" "$S/group"; sed -i "s/:$1$/:/" "$S/group" ;;
+  groupdel) sed -i "/^$1:/d" "$S/group" ;;
+  install)
+    dir=0; last=""
+    for a in "$@"; do case "$a" in -d) dir=1 ;; esac; done
+    while [ $# -gt 0 ]; do
+      case "$1" in -o|-g|-m) shift 2; continue ;; -d) shift; continue ;; esac
+      if [ "$dir" = 1 ]; then mkdir -p "$1"; else set -- "$@"; break; fi
+      shift
+    done
+    if [ "$dir" = 0 ]; then
+      for last in "$@"; do :; done
+      while [ $# -gt 1 ]; do
+        if [ -d "$last" ]; then cp "$1" "$last/"; else cp "$1" "$last"; fi
+        shift
+      done
+    fi ;;
+  fallocate) : > "$3" ;;
+  mountpoint) [ -e "$S/mounted" ]; exit ;;
+  systemctl)
+    case "$1" in
+      is-active) [ "$2" = -q ] && shift; [ -e "$S/active_$2" ]; exit ;;
+      enable) [ "$2" = --now ] && touch "$S/mounted" ;;
+      disable) rm -f "$S/mounted" ;;
+    esac ;;
+  iptables-save) cat "$S/rules_$(cat "$S/saves" 2>/dev/null || echo 0)" 2>/dev/null
+    echo $(( $(cat "$S/saves" 2>/dev/null || echo 0) + 1 )) > "$S/saves" ;;
+  iptables) t=; [ "$1" = -t ] && { t="$2_"; shift 2; }
+    [ "$1" = -D ] && { f="$S/jumps_$t$2"; n=$(cat "$f" 2>/dev/null || echo 0); [ "$n" -gt 0 ] || exit 1;
+    echo $((n - 1)) > "$f"; } ; exit 0 ;;
+  docker)
+    case "$1" in
+      ps) cat "$S/ps_$(cat "$S/pss" 2>/dev/null || echo 0)" 2>/dev/null
+        echo $(( $(cat "$S/pss" 2>/dev/null || echo 0) + 1 )) > "$S/pss" ;;
+      image) [ "$2" = inspect ] && { [ -e "$S/image" ] || exit 1; echo "$STUB_IMAGE_ID"; } ;;
+      load) cat > /dev/null; touch "$S/image" ;;
+      version) echo "${STUB_DOCKER_VERSION:-29.6.1}" ;;
+      info) [ -e "$S/no_runsc" ] && echo '{"runc":{}}' || echo '{"runc":{},"runsc":{}}' ;;
+      network)
+        case "$2" in
+          ls) ls "$S/nets" 2>/dev/null ;;
+          inspect) cat "$S/nets/$5" ;;
+        esac ;;
+    esac ;;
+  pgrep) exit 1 ;;
+esac
+exit 0
+"""
+STUBBED = (
+    "id getent groupadd useradd userdel groupdel install fallocate mkfs.ext4 mountpoint mount umount systemctl "
+    "networkctl ip iptables iptables-save docker chown pgrep git uv sleep df"
+).split()
+
+
+@pytest.fixture
+def host(tmp_path):
+    bin_dir, state, prefix = tmp_path / "bin", tmp_path / "state", tmp_path / "root"
+    for d in (bin_dir, state, prefix):
+        d.mkdir()
+    for name in STUBBED:
+        (bin_dir / name).write_text(STUB)
+        (bin_dir / name).chmod(0o755)
+    (bin_dir / "python3").symlink_to(sys.executable)
+    (state / "passwd").write_text("root:x:0:0::/root:/bin/sh\n")
+    (state / "group").write_text("root:x:0:\n")
+    log = tmp_path / "calls.log"
+    env = {
+        "PATH": f"{bin_dir}:/usr/bin:/bin",
+        "EVALS_PREFIX": str(prefix),
+        "STUB_LOG": str(log),
+        "STUB_STATE": str(state),
+        "STUB_IMAGE_ID": IMAGE_ID,
+    }
+
+    def run(script, *args, check=True, **extra):
+        log.write_text("")
+        p = subprocess.run(
+            ["sh", str(HOST / script), *args], env={**env, **extra}, capture_output=True, text=True, timeout=60
+        )
+        if check:
+            assert p.returncode == 0, p.stdout + p.stderr
+        return p, log.read_text().splitlines()
+
+    return {"run": run, "state": state, "prefix": prefix, "tmp": tmp_path}
+
+
+def test_every_step_has_an_undo_and_parses():
+    assert [s.split("-", 1)[0] for s in STEPS] == [str(i) for i in range(1, 10)]
+    for step in STEPS:
+        undo = HOST / step.replace(".sh", "-undo.sh")
+        assert undo.exists() != (step in READ_ONLY), undo.name
+        for script in [HOST / step] + ([undo] if undo.exists() else []):
+            subprocess.run(["sh", "-n", str(script)], check=True, timeout=30)
+            assert script.read_text().startswith("#!/bin/sh\n") and "\nset -eu\n" in script.read_text()
+
+
+@pytest.mark.parametrize("script", STEPS + UNDOS)
+def test_without_yes_nothing_changes(host, script):
+    p, calls = host["run"](script)
+    assert "Dry run: nothing changed" in p.stdout
+    assert calls == ["id -u"], calls  # the root check, and nothing else
+    assert not any(host["prefix"].iterdir())
+
+
+@pytest.mark.parametrize("script", ["1-user.sh", "4-check.sh", "7-docker-proxy-undo.sh"])
+def test_needs_root(host, script):
+    p, _ = host["run"](script, "--yes", check=False, STUB_UID="1000")
+    assert p.returncode == 1 and "run as root" in p.stderr
+
+
+def test_user_step_is_idempotent_and_keeps_evals_out_of_docker(host):
+    host["run"]("1-user.sh", "--yes")
+    _, calls = host["run"]("1-user.sh", "--yes")
+    assert not [c for c in calls if c.startswith(("useradd", "groupadd"))]  # second run: nothing new
+    passwd = (host["state"] / "passwd").read_text()
+    assert "evals:x:10010:" in passwd
+    assert (host["state"] / "groups_of_evals").read_text().split() == ["evals", "evalskills"]
+    (host["state"] / "groups_of_evals").write_text("evals evalskills docker\n")
+    p, _ = host["run"]("1-user.sh", "--yes", check=False)
+    assert p.returncode == 1 and "also in group docker" in p.stderr
+
+
+def test_user_step_refuses_a_name_with_another_uid(host):
+    (host["state"] / "passwd").write_text("evals:x:1234:1234::/home/evals:/bin/sh\n")
+    p, calls = host["run"]("1-user.sh", "--yes", check=False)
+    assert p.returncode == 1 and "another uid" in p.stderr
+    assert not [c for c in calls if c.startswith("useradd")]
+    p, calls = host["run"]("1-user-undo.sh", "--yes", check=False)
+    assert p.returncode == 1 and not [c for c in calls if c.startswith("userdel")]
+
+
+def test_user_undo_removes_only_its_user_and_group(host):
+    host["run"]("1-user.sh", "--yes")
+    _, calls = host["run"]("1-user-undo.sh", "--yes")
+    assert "userdel evals" in calls and "groupdel evalskills" in calls
+    assert (host["state"] / "passwd").read_text() == "root:x:0:0::/root:/bin/sh\n"
+    assert (host["state"] / "group").read_text() == "root:x:0:\n"
+
+
+def test_run_disk_is_preallocated_once_and_mounted_nodev_nosuid(host):
+    host["run"]("1-user.sh", "--yes")
+    _, calls = host["run"]("2-run-disk.sh", "--yes")
+    assert any(c.startswith("fallocate -l 5G ") for c in calls) and any(c.startswith("mkfs.ext4") for c in calls)
+    _, calls = host["run"]("2-run-disk.sh", "--yes")
+    assert not [c for c in calls if c.startswith(("fallocate", "mkfs.ext4"))]  # never reformats
+    unit = (host["prefix"] / "etc/systemd/system/srv-evals-run.mount").read_text()
+    assert "Options=loop,nodev,nosuid\n" in unit and "Where=/srv/evals/run\n" in unit
+    assert "chown evals:evals " + str(host["prefix"] / "srv/evals/run") in calls
+
+
+def test_undos_refuse_while_the_socket_proxy_runs(host):
+    (host["state"] / "active_evalskills-docker-proxy").touch()
+    for script in ("2-run-disk-undo.sh", "5-code-undo.sh", "9-live-undo.sh"):
+        p, calls = host["run"](script, "--yes", check=False)
+        assert p.returncode == 1 and "socket proxy is running" in p.stderr, script
+        assert not [c for c in calls if c.startswith(("rm ", "docker compose", "systemctl disable"))]
+
+
+def test_hosts_step_names_the_gateway_once_and_its_undo_removes_only_that(host):
+    hosts = host["prefix"] / "etc/hosts"
+    hosts.parent.mkdir(parents=True, exist_ok=True)
+    hosts.write_text("127.0.0.1 localhost\n10.0.0.5 app\n")
+    _, calls = host["run"]("3-hosts.sh", "--yes")
+    host["run"]("3-hosts.sh", "--yes")
+    line = "172.31.248.2 evals-gateway # evalskills #137"
+    assert hosts.read_text() == f"127.0.0.1 localhost\n10.0.0.5 app\n{line}\n"
+    assert not [c for c in calls if c.split()[0] in ("ip", "networkctl", "iptables", "systemctl")]  # nothing else
+    host["run"]("3-hosts-undo.sh", "--yes")
+    assert hosts.read_text() == "127.0.0.1 localhost\n10.0.0.5 app\n"
+
+
+def nets(host, **found):
+    d = host["state"] / "nets"
+    d.mkdir(exist_ok=True)
+    for name, line in found.items():
+        (d / name).write_text(line + "\n")
+
+
+def test_check_step_passes_on_a_ready_host_and_changes_nothing(host):
+    nets(host, bridge="bridge||172.17.0.0/16 ", app="evalskills_default||172.30.250.0/24 ")
+    nets(host, mine="trial-1|1|172.31.240.0/28 ", egress="evalskills-egress||172.31.248.0/24 ")
+    p, calls = host["run"]("4-check.sh", "--yes")
+    assert "ok: Docker 29.6.1" in p.stdout
+    assert {c.split()[0] for c in calls} <= {"id", "docker"}
+    assert not [c for c in calls if c.startswith("docker ") and c.split()[1] not in ("version", "info", "network")]
+
+
+@pytest.mark.parametrize(
+    ("setup", "why"),
+    [
+        ({"STUB_DOCKER_VERSION": "27.5.1"}, "28 or later"),
+        ({"no_runsc": True}, "runsc is not a registered runtime"),
+        ({"net": "other||172.31.240.64/26 "}, "already uses our ranges: other 172.31.240.64/26"),
+        ({"net": "other||172.31.0.0/16 "}, "already uses our ranges"),
+        ({"net": "other||10.0.0.0/24 172.31.248.128/25 "}, "already uses our ranges: other 172.31.248.128/25"),
+    ],
+)
+def test_check_step_refuses_a_host_that_is_not_ready(host, setup, why):
+    env = {k: v for k, v in setup.items() if k.startswith("STUB_")}
+    if setup.get("no_runsc"):
+        (host["state"] / "no_runsc").touch()
+    if "net" in setup:
+        nets(host, other=setup["net"])
+    p, _ = host["run"]("4-check.sh", "--yes", check=False, **env)
+    assert p.returncode == 1 and why in p.stderr
+
+
+def artifact(tmp: Path, tags=("evalskills/trial-base:d136a597",), **over) -> Path:
+    d = tmp / "artifact"
+    d.mkdir(exist_ok=True)
+    tar = d / "trial-base.tar.gz"
+    manifest = json.dumps([{"Config": "c.json", "RepoTags": list(tags), "Layers": []}]).encode()
+    with tarfile.open(tar, "w:gz") as t:
+        info = tarfile.TarInfo("manifest.json")
+        info.size = len(manifest)
+        t.addfile(info, io.BytesIO(manifest))
+    meta = {
+        "image": "evalskills/trial-base:d136a597",
+        "loadable": True,
+        "pinned": "committed",
+        "tar_sha256": hashlib.sha256(tar.read_bytes()).hexdigest(),
+        "run_id": "1",
+        "commit": "c" * 40,
+        **over,
+    }
+    (d / "trial-base.json").write_text(json.dumps(meta))
+    return d
+
+
+@pytest.mark.parametrize(
+    ("over", "why"),
+    [
+        ({"loadable": False}, "not loadable"),
+        ({"pinned": "new"}, "uncommitted digest"),
+        ({"tar_sha256": "0" * 64}, "does not match"),
+        ({"image": "evalskills/trial-base:other"}, "is not evalskills/trial-base"),
+    ],
+)
+def test_base_image_step_refuses_an_artifact_that_fails_a_check(host, over, why):
+    p, calls = host["run"]("6-base-image.sh", "--yes", str(artifact(host["tmp"], **over)), check=False)
+    assert p.returncode == 1 and why in p.stderr
+    assert not [c for c in calls if c.startswith("docker load")]
+
+
+@pytest.mark.parametrize("tags", [("evalskills/trial-base:d136a597", "caddy:latest"), ("caddy:latest",), ()])
+def test_base_image_step_refuses_a_tarball_tagging_anything_else(host, tags):
+    p, calls = host["run"]("6-base-image.sh", "--yes", str(artifact(host["tmp"], tags=tags)), check=False)
+    assert p.returncode == 1 and "not exactly evalskills/trial-base:d136a597" in p.stderr
+    assert not [c for c in calls if c.startswith("docker load")]
+
+
+def test_base_image_step_loads_and_prints_the_hosts_id(host):
+    p, calls = host["run"]("6-base-image.sh", "--yes", str(artifact(host["tmp"])))
+    assert "docker load" in calls and IMAGE_ID in p.stdout
+
+
+def test_proxy_step_pins_the_hosts_image_id_and_never_enables_the_unit(host):
+    sys.path.insert(0, str(ROOT / "gateway"))
+    import docker_proxy as dp
+
+    host["run"]("1-user.sh", "--yes")
+    code = host["prefix"] / "opt/evalskills/gateway"
+    code.mkdir(parents=True)
+    (code / "docker_proxy.py").write_text("")
+    (host["state"] / "image").touch()
+    _, calls = host["run"]("7-docker-proxy.sh", "--yes")
+    assert not [c for c in calls if c.startswith(("systemctl enable", "systemctl start"))]
+    raw = json.loads((host["prefix"] / "etc/evals/docker-proxy.json").read_text())
+    assert raw["builds"]["base_image_id"] == IMAGE_ID
+    raw["builds"]["allowed_dockerfiles"] = str(ROOT / "deploy/gvisor/build/allowed-dockerfiles.txt")
+    cfg = dp.load_config(raw)
+    assert cfg["eval_uid"] == 10010 and cfg["listen_group"] == "evalskills" and cfg["bind_root"] == "/srv/evals/run"
+    assert os.stat(host["prefix"] / "etc/evals/docker-proxy.json").st_mode & 0o777 == 0o640
+
+
+def test_proxy_unit_needs_the_run_disk():
+    unit = (HOST / "evalskills-docker-proxy.service").read_text()
+    assert "Requires=docker.service srv-evals-run.mount\n" in unit
+    assert "--config /etc/evals/docker-proxy.json" in unit and "[Install]" not in unit  # can't be enabled
+
+
+def test_docker_client_config_points_at_the_egress_proxy_and_is_roots(host):
+    host["run"]("1-user.sh", "--yes")
+    _, calls = host["run"]("8-docker-client.sh", "--yes")
+    cfg = json.loads((host["prefix"] / "var/lib/evals/.docker/config.json").read_text())
+    assert cfg["proxies"]["default"]["httpsProxy"] == "http://evals-proxy:3128"
+    assert any(c.startswith("install -o root -g root -m 0644 ") for c in calls)
+
+
+def live_ready(host, ps: str) -> None:
+    (host["prefix"] / "etc/evalskills/secrets").mkdir(parents=True)
+    (host["prefix"] / "etc/evalskills/secrets/model_key").touch()
+    (host["prefix"] / "opt/evalskills/deploy/live").mkdir(parents=True)
+    (host["prefix"] / "opt/evalskills/deploy/live/compose.yaml").touch()
+    (host["state"] / "ps_0").write_text(ps)
+
+
+def test_live_step_refuses_without_the_model_key(host):
+    live_ready(host, "")
+    (host["prefix"] / "etc/evalskills/secrets/model_key").unlink()
+    p, calls = host["run"]("9-live.sh", "--yes", check=False)
+    assert p.returncode == 1 and "no model key file" in p.stderr
+    assert not [c for c in calls if c.startswith("docker compose")]
+
+
+def test_live_undo_refuses_while_the_socket_proxy_runs(host):
+    live_ready(host, "")
+    (host["state"] / "active_evalskills-docker-proxy").touch()
+    p, calls = host["run"]("9-live-undo.sh", "--yes", check=False)
+    assert p.returncode == 1 and "socket proxy is running" in p.stderr
+    assert not [c for c in calls if c.startswith("docker compose")]
+
+
+def test_live_step_starts_the_gateway_and_proxy(host):
+    live_ready(host, "web 0.0.0.0:8080->443/tcp, 127.0.0.1:18443->8443/tcp\n")
+    _, calls = host["run"]("9-live.sh", "--yes")
+    assert [c for c in calls if c.startswith("docker compose")]

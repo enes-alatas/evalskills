@@ -111,3 +111,48 @@ estimated) remain an option, but cost money per run.
 - A trial whose Dockerfile the proxy refuses is recorded as `unsupported` (needs a custom environment or
   dependencies), never `failed` and never scored. The evidence is a file that GvisorEnvironment writes
   (`EVALSKILLS_UNSUPPORTED_FILE`), in a folder no container is bound to, not the log, which a skill can fill.
+
+**Amendment (2026-11-14, #137): the host files, and trials isolated by Docker alone.**
+- The host steps live in `deploy/gvisor/host/`, one script per step. Each prints its plan and acts only with
+  `--yes`, and the host's operator runs each one in an announced window. Every step that changes the host has an
+  undo. They are: the trial user `evals` (uid 10010, only in group `evalskills`); a 5 GB preallocated ext4 image
+  mounted `nodev,nosuid` at `/srv/evals/run`; one `/etc/hosts` line; a read-only check of the daemon (Docker 28 or
+  later, `runsc` registered, our two ranges free); the code under `/opt`; the CI-built base image; the socket proxy's
+  unit (installed, not enabled); the trial user's Docker client proxies; and the gateway and egress proxy.
+- The withdrawn second daemon's install files (`install.sh`, `preflight.sh`, `docker-evals.service`,
+  `daemon-evals.json`) are removed. The refusal next to another dockerd goes with them, since nothing installs a
+  second daemon any more. `uninstall.sh` stays for a host where it was installed.
+- Trial images grow `/var/lib/docker` on `/`, outside the capped disk. So `pipeline/tier3.py` also refuses to start a
+  trial while free space on `/` is below `TIER3_MIN_FREE_ROOT` (default 8 GB).
+- **Trial networks.** Each is internal with masquerading off, so it has no route off its /28. Each is also created
+  with `com.docker.network.bridge.inhibit_ipv4=true`, so its bridge has no address on the host. A trial reaches only
+  the containers on its own network. The socket proxy forces all three options on every network it creates.
+- **The services.** The model gateway and the egress proxy run as containers on their own normal bridge network,
+  `evalskills-egress` (172.31.248.0/24, at `.2` and `.3`). They publish nothing and run with `net.ipv4.ip_forward=0`:
+  a container's namespace copies the host's 1 otherwise, and `trial-network` saw 1. At a trial network's first
+  container create, the socket proxy attaches both to that network. It names them `evals-gateway` and `evals-proxy`
+  in the trial's `/etc/hosts`, and refuses a request's own entry for either name. It detaches them before the
+  network is removed. If the attach fails, the container create is refused, so no trial runs on a network without
+  them. The host side reaches the gateway at `172.31.248.2` directly, and step 3 names that address `evals-gateway` in
+  the host's `/etc/hosts`. So the one URL SkillEvaluator gets works for the host-side judge and for the agent in the
+  trial. Proposed by Enes on #137.
+- **No trial firewall.** `firewall.sh`, its boot unit and its `EVALS-*` chains are removed, and no host step changes
+  iptables. Decided by Enes, 2026-11-14, by direct message. Isolation holds without it for three reasons:
+  - A trial has no route off its network (`internal`).
+  - It has no address on the host to reach (`inhibit_ipv4`).
+  - The two services it shares a network with forward nothing (`ip_forward=0`).
+
+  The proxy's `GET /_evalskills/isolation` reads all three back from the daemon, and checks that the services sit
+  only on their egress network and trial networks. `pipeline/tier3.py` refuses to start a trial unless it reports ok.
+  That replaces the firewall check in the amendment "who runs a trial" (2026-11-13). The `trial-network` workflow
+  proves all of this through the real proxy, with runsc, on Docker 29.6.1, before and after a dockerd restart:
+  - each trial reaches the two services, and not a trial on another network (both ways), the services' egress side,
+    the host or the internet
+  - both services run with `ip_forward=0`, read back by CI and by the isolation check. A `NET_ADMIN` routing
+    attempt through either service also fails, but that is supporting evidence only: no return route exists
+    either way
+  - the services listen on their one port each
+  This supersedes the earlier text on an egress firewall: the Context, `firewall.sh` before the daemon, and the
+  2026-11-12 amendment's two ports on `br-evals`.
+- The services' own egress isn't limited by the network. The gateway calls only its configured upstream
+  (`gateway.json`), and the egress proxy only its allowlist (`egress-proxy.json`), both enforced in their code.

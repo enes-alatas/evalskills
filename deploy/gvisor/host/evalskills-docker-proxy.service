@@ -1,0 +1,19 @@
+# The Docker socket proxy (#137, step 7): the trial user's only way to the main Docker daemon. Root, because it
+# forwards to /var/run/docker.sock. NOT enabled: start it for a pilot and stop it afterwards
+# (systemctl start|stop evalskills-docker-proxy). It needs the trial folders' filesystem.
+[Unit]
+Description=evalskills Docker socket proxy (trials only)
+Requires=docker.service srv-evals-run.mount
+After=docker.service srv-evals-run.mount
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /opt/evalskills/gateway/docker_proxy.py --config /etc/evals/docker-proxy.json
+RuntimeDirectory=evalskills
+RuntimeDirectoryMode=0755
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+Restart=on-failure
+RestartSec=5
