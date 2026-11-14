@@ -1,0 +1,42 @@
+# Throwaway diagnostic for #137 (never merged): can a container on a trial network reach 172.31.248.1 on evals0?
+name: diag-evals0
+on:
+  pull_request:
+    paths: [.github/workflows/diag-evals0.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install Docker 29.6.1
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" | sudo tee /etc/apt/sources.list.d/docker.list
+          sudo apt-get update -q
+          v=$(apt-cache madison docker-ce | awk '$3 ~ "^5:29.6.1-" {print $3; exit}')
+          sudo apt-get install -y -q --allow-downgrades "docker-ce=$v" "docker-ce-cli=$v"
+          docker version --format '{{.Server.Version}}'
+      - name: evals0 and a listener on 172.31.248.1:8443
+        run: |
+          sudo ip link add evals0 type dummy
+          sudo ip addr add 172.31.248.1/32 dev evals0
+          sudo ip link set evals0 up
+          nohup python3 -m http.server --bind 172.31.248.1 8443 >/tmp/srv.log 2>&1 &
+          sleep 1; curl -sS -o /dev/null -w 'host: %{http_code}\n' http://172.31.248.1:8443/
+          docker pull -q python:3.12-slim
+      - name: Probe each network shape
+        run: |
+          probe='import urllib.request,subprocess;print(open("/proc/net/route").read());
+          try:
+              print("reach:",urllib.request.urlopen("http://172.31.248.1:8443/",timeout=5).status)
+          except Exception as e:
+              print("reach: FAIL",repr(e))'
+          shape() { name=$1; shift; docker network create "$@" "$name" >/dev/null
+            echo "=== $name ($*)"; docker run --rm --network "$name" python:3.12-slim python -c "$probe" || true
+            docker network rm "$name" >/dev/null; }
+          shape internal --internal --subnet 172.31.240.0/28 -o com.docker.network.bridge.enable_ip_masquerade=false
+          shape bridge-nomasq --subnet 172.31.240.16/28 -o com.docker.network.bridge.enable_ip_masquerade=false
+          shape internal-gw --internal --subnet 172.31.240.32/28 --gateway 172.31.240.33 -o com.docker.network.bridge.enable_ip_masquerade=false
