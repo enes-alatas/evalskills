@@ -16,18 +16,22 @@ it gets this proxy's socket, and the proxy (root) forwards only what a SkillEval
   The proxy refuses a source if it, or any folder on its path, is a symlink; folders at or below the root must be
   owned by the eval user, folders above it by root. A bind onto /etc/resolv.conf must be read-only and hold exactly
   ``nameserver 127.0.0.1``. The check runs before the daemon mounts, so a window remains (documented, #137).
-- **Networks** are bridge networks, forced ``internal`` with masquerading off, each given a /28 from the trial pool.
-  A container joins only these networks, or none. Never the default bridge: docker0 has NAT egress outside the
-  firewall's scope.
+- **Networks** are bridge networks, forced ``internal`` with masquerading off and no address on the host
+  (``inhibit_ipv4``), each given a /28 from the trial pool. A trial on one reaches only the other containers on it.
+  On a trial's container create the proxy attaches the model gateway and the egress proxy (``services``, containers
+  on a normal egress network) to that network and names them in the trial's /etc/hosts (``evals-gateway``,
+  ``evals-proxy``); before a network delete it detaches them. A container joins only these networks, or none.
+  Never the default bridge: docker0 has NAT egress and an address on the host.
 - **No smuggling.** Every request goes upstream on its own connection with ``Connection: close``, with a head the
   proxy rebuilds itself. Client bytes after the request are forwarded only after the daemon has switched an attach
   or exec start to a raw stream (101).
-- ``GET /_evalskills/firewall`` reports whether the trial firewall's jumps are in place (it runs ``iptables -S`` as
-  root); the runner refuses to start trials when it isn't ok.
+- ``GET /_evalskills/isolation`` reports whether every trial network still has its flags and both services still
+  forward nothing and sit on no one else's network; the runner refuses to start trials when it isn't ok. There is no
+  host firewall for trials: the isolation is Docker's (ADR-0003, amended 2026-11-14).
 
 It logs methods, routes and decisions, never bodies or environment values. Standard library only.
 
-Run (as root): python3 -I gateway/docker_proxy.py --config /etc/evalskills/docker-proxy.json
+Run (as root; evalskills-docker-proxy.service): python3 -I gateway/docker_proxy.py --config /etc/evals/docker-proxy.json
 """
 
 from __future__ import annotations
@@ -44,7 +48,6 @@ import select
 import socket
 import socketserver
 import stat
-import subprocess
 import sys
 import tempfile
 import threading
@@ -81,17 +84,23 @@ DEFAULTS = {
     "eval_uid": None,
     "network_pool": "172.31.240.0/21",
     "network_prefix": 28,
-    "firewall_scope": "172.31.240.0/20",
-    "iptables": "iptables",
+    "egress_network": "evalskills-egress",  # the services' own network (deploy/live/compose.yaml)
     "idle_timeout_s": 1800,  # longer than a trial (900 s cap, #118): an agent may print nothing until it ends
     "builds": None,  # see BUILD_DEFAULTS; null = the build endpoint answers 503
+    # The name a trial uses for each service -> the service's container (deploy/live/compose.yaml). The proxy attaches
+    # these containers to every trial network and points the names at their addresses there (#137).
+    "services": {"evals-gateway": "evalskills-gateway", "evals-proxy": "evalskills-egress-proxy"},
 }
 OWNER_LABEL = "io.evalskills.owned"
 RUNTIME = "runsc"
+# Each trial network is internal with no address on the host (inhibit_ipv4), so a trial reaches nothing but the
+# containers on its own network (#137). The model gateway and the egress proxy are containers on a normal egress
+# network; the proxy attaches them to every trial network and names them in each trial's /etc/hosts (cfg services).
 NO_DNS_RESOLV = b"nameserver 127.0.0.1\n"
 MAX_HEAD = 64 * 1024
 MAX_JSON_BODY = 1024 * 1024
 ID = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}"
+HOSTNAME = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
 IMAGE_REF = r"[A-Za-z0-9][A-Za-z0-9_.:/@-]{0,255}"
 VERSION = re.compile(r"^/v1\.\d{1,3}(/.*)$")
 MIN_IDLE_S = 900 + 300  # the trial cap (#118) plus a margin
@@ -130,15 +139,23 @@ def load_config(raw: dict) -> dict:
         raise ConfigError("bind_root must be a normalized absolute path other than /")
     try:
         cfg["network_pool"] = ipaddress.ip_network(cfg["network_pool"])
-        cfg["firewall_scope"] = ipaddress.ip_network(cfg["firewall_scope"])
     except ValueError as e:
         raise ConfigError(f"bad network: {e}") from e
     if not isinstance(cfg["idle_timeout_s"], int) or cfg["idle_timeout_s"] < MIN_IDLE_S:
         raise ConfigError(f"idle_timeout_s must be at least {MIN_IDLE_S} (the trial cap plus a margin)")
-    if not cfg["network_pool"].subnet_of(cfg["firewall_scope"]):
-        raise ConfigError("network_pool must lie inside firewall_scope")
+    if not isinstance(cfg["egress_network"], str) or not re.fullmatch(ID, cfg["egress_network"]):
+        raise ConfigError("egress_network must name a network")
     if not cfg["network_pool"].prefixlen <= cfg["network_prefix"] <= 30:
         raise ConfigError("network_prefix must split network_pool into networks of at least 4 addresses")
+    svc = cfg["services"]
+    if (
+        not isinstance(svc, dict)
+        or not svc
+        or not all(isinstance(k, str) and re.fullmatch(HOSTNAME, k) for k in svc)
+        or not all(isinstance(v, str) and re.fullmatch(ID, v) for v in svc.values())
+        or len(set(svc.values())) != len(svc)
+    ):
+        raise ConfigError("services must map host names to distinct container names")
     if cfg["builds"] is not None:
         cfg["builds"] = load_build_config(cfg["builds"])
     return cfg
@@ -220,6 +237,54 @@ class Daemon:
         if doc is None:
             raise Refused("no such exec instance", 404)
         return str(doc.get("ContainerID") or "")
+
+    def post(self, url: str, doc: dict) -> int:
+        """One of the proxy's own small writes (attach or detach a service); returns the daemon's status."""
+        conn = _UnixHTTPConnection(self.path)
+        try:
+            conn.request(
+                "POST", url, body=json.dumps(doc), headers={"Host": "docker", "Content-Type": "application/json"}
+            )
+            resp = conn.getresponse()
+            resp.read(MAX_JSON_BODY)
+            return resp.status
+        except OSError as e:
+            raise Refused(f"the proxy's call failed ({type(e).__name__})", 502) from e
+        finally:
+            conn.close()
+
+    def service_address(self, network: str, container: str) -> str | None:
+        """The IPv4 address a service container has on one of the proxy's networks, or None when it isn't attached."""
+        doc = self.get(f"/containers/{container}/json")
+        if doc is None or not (doc.get("State") or {}).get("Running"):
+            raise Refused(f"the service {container} is not running", 503)
+        if ((doc.get("Config") or {}).get("Labels") or {}).get(OWNER_LABEL):
+            raise Refused(f"{container} is a trial's container, not the service", 502)  # a trial took its name
+        net = self.get(f"/networks/{network}") or {}
+        for ep in ((doc.get("NetworkSettings") or {}).get("Networks") or {}).values():
+            if net.get("Id") and ep.get("NetworkID") == net["Id"] and ep.get("IPAddress"):
+                return str(ipaddress.IPv4Address(ep["IPAddress"]))
+        return None
+
+    def attach_services(self, network: str, services: dict) -> dict:
+        """Attach each service to the trial network if it isn't yet; → {host name: its address there}."""
+        out = {}
+        for host, container in services.items():
+            ip = self.service_address(network, container)
+            if ip is None:
+                status = self.post(f"/networks/{network}/connect", {"Container": container})
+                ip = self.service_address(network, container)  # also covers a concurrent create attaching it first
+                if ip is None:
+                    raise Refused(f"could not attach {container} to the trial network ({status})", 502)
+                log("attached", service=container)
+            out[host] = ip
+        return out
+
+    def detach_services(self, network: str, services: dict) -> None:
+        """Before a trial network is removed: Docker refuses to remove a network a container is still on."""
+        for container in services.values():
+            if self.post(f"/networks/{network}/disconnect", {"Container": container, "Force": True}) == 200:
+                log("detached", service=container)
 
     def owned_subnets(self) -> list:
         nets = self.get("/networks?" + urlencode({"filters": json.dumps({"label": [f"{OWNER_LABEL}=1"]})})) or []
@@ -519,8 +584,8 @@ class Policy:
     # networks ----------------------------------------------------------
 
     def check_network_ref(self, name: str, where: str) -> None:
-        """An owned network, by name or id. "", "default" and "bridge" mean docker0, which has NAT egress outside the
-        firewall's scope; "host" and "container:…" share someone else's network."""
+        """An owned network, by name or id. "", "default" and "bridge" mean docker0, which has NAT egress and an
+        address on the host; "host" and "container:…" share someone else's network."""
         if name in ("", "default", "bridge", "host", "none") or not re.fullmatch(ID, name or ""):
             raise Refused(f"{where} must name a network")
         if not self.daemon.owned("network", name):
@@ -543,6 +608,17 @@ class Policy:
         for name, ep in endpoints.items():
             self.check_network_ref(name, "NetworkingConfig.EndpointsConfig")
             _only(ep or {}, ENDPOINT_FIELDS, "NetworkingConfig.EndpointsConfig[]")
+        hosts = hc.get("ExtraHosts") or []
+        if not isinstance(hosts, list) or not all(isinstance(h, str) for h in hosts):
+            raise Refused("HostConfig.ExtraHosts must be a list of strings")
+        # Docker takes "name:ip" and "name=ip"; refuse the services' names under either separator
+        names = set(self.cfg["services"])
+        if any(re.split("[:=]", h, maxsplit=1)[0].strip().lower() in names for h in hosts):
+            raise Refused(f"HostConfig.ExtraHosts may not set {', '.join(sorted(names))}: the proxy sets them")
+        if mode != "none":  # a trial on one of our networks: attach the services to it and name them
+            addrs = self.daemon.attach_services(mode, self.cfg["services"])
+            # first, because a resolver reading /etc/hosts takes the first line that names the host
+            hc["ExtraHosts"] = [*(f"{h}:{ip}" for h, ip in addrs.items()), *hosts]
         image = body.get("Image")
         if not isinstance(image, str) or not re.fullmatch(IMAGE_REF, image):
             raise Refused("Config.Image must name an image")
@@ -565,8 +641,12 @@ class Policy:
                     "Driver": "bridge",
                     "Internal": True,
                     "EnableIPv6": False,
-                    "IPAM": {"Driver": "default", "Config": [{"Subnet": str(subnet)}]},
-                    "Options": {"com.docker.network.bridge.enable_ip_masquerade": "false"},
+                    "IPAM": {"Driver": "default", "Config": [{"Subnet": str(subnet), "Gateway": str(subnet[1])}]},
+                    # the gateway address is reserved but never put on the host's bridge: no route to the host
+                    "Options": {
+                        "com.docker.network.bridge.enable_ip_masquerade": "false",
+                        "com.docker.network.bridge.inhibit_ipv4": "true",
+                    },
                     "Labels": {**(body.get("Labels") or {}), OWNER_LABEL: "1"},
                 }
             )
@@ -647,7 +727,7 @@ ROUTES = [
     ("GET", r"/networks", None, "filter"),
     ("POST", r"/networks/create", None, "network_create"),
     ("GET", N, "network", "pass"),
-    ("DELETE", N, "network", "pass"),
+    ("DELETE", N, "network", "network_delete"),
     ("POST", N + r"/(?:connect|disconnect)", "network", "network_attach"),
     ("GET", r"/images/json", None, "filter"),
     ("GET", rf"/images/({IMAGE_REF})/json", "image", "pass"),  # other images' Config.Env may hold secrets
@@ -832,34 +912,39 @@ def pipe(a: socket.socket, b: socket.socket, idle: float, both: bool) -> None:
             (b if s is a else a).sendall(data)
 
 
-# ---------------------------------------------------------------- firewall
+# ---------------------------------------------------------------- isolation
+
+MASQUERADE = "com.docker.network.bridge.enable_ip_masquerade"
+INHIBIT = "com.docker.network.bridge.inhibit_ipv4"
 
 
-def firewall_status(cfg: dict, run=subprocess.run) -> tuple[bool, str]:
-    """Trial traffic must meet the EVALS chains before anything else, and both chains must end in DROP:
-    - DOCKER-USER and INPUT start with the scoped jump to EVALS-EGRESS and EVALS-INPUT;
-    - FORWARD starts with the scoped EVALS-EGRESS jump or with the DOCKER-USER jump (dockerd puts its DOCKER-USER
-      jump back on top of FORWARD on every start, and DOCKER-USER then sends trial traffic to EVALS-EGRESS first)."""
-    scope = str(cfg["firewall_scope"])
-
-    def rules(chain):
-        p = run([cfg["iptables"], "-w", "-S", chain], capture_output=True, text=True, timeout=10)
-        if p.returncode != 0:
-            raise RuntimeError(chain)
-        return [ln for ln in p.stdout.splitlines() if ln.startswith("-A ")]
-
+def isolation_status(cfg: dict, daemon: Daemon) -> tuple[bool, str]:
+    """What keeps a trial in (#137, ADR-0003 amended 2026-11-14), read back from the daemon before every pilot:
+    - every trial network is internal, with masquerading off and no address on the host;
+    - each service runs with ip_forward=0, publishes nothing, and is on its egress network and trial networks only."""
     try:
-        for chain, target in (("DOCKER-USER", "EVALS-EGRESS"), ("INPUT", "EVALS-INPUT")):
-            if rules(chain)[:1] != [f"-A {chain} -s {scope} -j {target}"]:
-                return False, f"{chain} does not start with the {target} jump"
-        if rules("FORWARD")[:1] not in ([f"-A FORWARD -s {scope} -j EVALS-EGRESS"], ["-A FORWARD -j DOCKER-USER"]):
-            return False, "FORWARD does not start with the EVALS-EGRESS or the DOCKER-USER jump"
-        for chain in ("EVALS-EGRESS", "EVALS-INPUT"):
-            last = rules(chain)[-1:]
-            if last != [f"-A {chain} -j DROP"]:
-                return False, f"{chain} does not end in DROP"
-    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
-        return False, f"could not read the firewall ({e})"
+        nets = daemon.get("/networks?" + urlencode({"filters": json.dumps({"label": [f"{OWNER_LABEL}=1"]})})) or []
+        owned = set()
+        for n in nets:
+            doc = daemon.get(f"/networks/{n.get('Id', '')}") or {}
+            opts = doc.get("Options") or {}
+            if doc.get("Internal") is not True or opts.get(INHIBIT) != "true" or opts.get(MASQUERADE) != "false":
+                return False, f"trial network {str(doc.get('Name'))[:64]} lost its isolation flags"
+            owned.add(doc.get("Name"))
+        for container in cfg["services"].values():
+            doc = daemon.get(f"/containers/{container}/json")
+            if doc is None or not (doc.get("State") or {}).get("Running"):
+                return False, f"{container} is not running"
+            hc = doc.get("HostConfig") or {}
+            if (hc.get("Sysctls") or {}).get("net.ipv4.ip_forward") != "0":
+                return False, f"{container} may forward (net.ipv4.ip_forward is not 0)"
+            if hc.get("NetworkMode") == "host" or any(hc.get("PortBindings") or {}):
+                return False, f"{container} is on the host network or publishes a port"
+            on = set((doc.get("NetworkSettings") or {}).get("Networks") or {})
+            if cfg["egress_network"] not in on or on - owned - {cfg["egress_network"]}:
+                return False, f"{container} is on a network that is neither its egress network nor a trial's"
+    except Refused as e:
+        return False, f"could not read the daemon ({e})"
     return True, "ok"
 
 
@@ -890,8 +975,8 @@ class Handler(socketserver.BaseRequestHandler):
 
     def serve(self, client, buf, head: Head):
         path, _, query = head.target.partition("?")
-        if head.method == "GET" and path == "/_evalskills/firewall":
-            ok, why = firewall_status(self.cfg)
+        if head.method == "GET" and path == "/_evalskills/isolation":
+            ok, why = isolation_status(self.cfg, self.policy.daemon)
             body = json.dumps({"ok": ok, "why": why}).encode()
             code = 200 if ok else 503
             client.sendall(
@@ -910,6 +995,12 @@ class Handler(socketserver.BaseRequestHandler):
             raise Refused(f"{kind} is not one of the proxy's")
         if action == "filter":
             query = self.policy.owner_filtered(query)
+        asked = {v.strip("/") for k, v in parse_qsl(query) if k == "name"}
+        if action == "container_create" and asked & set(self.cfg["services"].values()):
+            raise Refused("a trial container may not take a service's name")
+        if action == "network_delete":
+            self.policy.daemon.detach_services(ident, self.cfg["services"])
+            action = "pass"
         target = path + ("?" + query if query else "")
 
         body, stream = None, False

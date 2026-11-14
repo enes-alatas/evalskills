@@ -29,12 +29,31 @@ class FakeDaemon(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
             ("container", "theirs"): {"Config": {"Labels": {}}},
             ("image", "trial-img"): {"Config": {"Labels": OWNED}},
             ("image", "nginx"): {"Config": {"Labels": {}}},
-            ("network", "trialnet"): {"Labels": OWNED, "IPAM": {"Config": [{"Subnet": "172.31.240.0/28"}]}},
-            ("network", "appnet"): {"Labels": {}},
+            ("network", "trialnet"): {
+                "Id": "trialnet-id",
+                "Labels": OWNED,
+                "IPAM": {"Config": [{"Subnet": "172.31.240.0/28", "Gateway": "172.31.240.1"}]},
+            },
+            ("network", "appnet"): {"Id": "appnet-id", "Labels": {}},
+            ("container", "evalskills-gateway"): service("172.31.248.2"),
+            ("container", "evalskills-egress-proxy"): service("172.31.248.3"),
             ("exec", "e-mine"): {"ContainerID": "mine"},
             ("exec", "e-theirs"): {"ContainerID": "theirs"},
         }
+        self.objects[("network", "trialnet-id")] = self.objects[("network", "trialnet")]  # by id too
+        self.objects[("network", "trialnet")]["Name"] = "trialnet"
+        self.own_calls = []  # (path, body) of the proxy's own attach and detach calls
         super().__init__(path, DaemonHandler)
+
+
+def service(egress_ip: str) -> dict:
+    """A running service container (deploy/live/compose.yaml): no owner label, on the egress network only."""
+    return {
+        "Config": {"Labels": {}},
+        "State": {"Running": True},
+        "HostConfig": {"NetworkMode": "evalskills-egress", "Sysctls": {"net.ipv4.ip_forward": "0"}},
+        "NetworkSettings": {"Networks": {"evalskills-egress": {"NetworkID": "egress-id", "IPAddress": egress_ip}}},
+    }
 
 
 class DaemonHandler(socketserver.StreamRequestHandler):
@@ -58,7 +77,7 @@ class DaemonHandler(socketserver.StreamRequestHandler):
                 self.rfile.readline()
             path = target.split("?")[0]
             check = "connection" not in headers  # the proxy's own inspect calls; forwarded requests always carry one
-            if not (check and self.answer_check(method, path, target)):
+            if not (check and (self.answer_own_write(method, path, body) or self.answer_check(method, path, target))):
                 if check:
                     self.send(404, {})
                     return
@@ -74,6 +93,31 @@ class DaemonHandler(socketserver.StreamRequestHandler):
             f"Content-Length: {len(body)}\r\n{extra}\r\n".encode()
             + body
         )
+
+    def answer_own_write(self, method, path, body):
+        """The proxy's own network connect / disconnect of a service: attach gives it the next address on the /28."""
+        parts = path.strip("/").split("/")
+        if method != "POST" or parts[0] != "networks" or len(parts) != 3 or parts[2] not in ("connect", "disconnect"):
+            return False
+        objs, doc = self.server.objects, json.loads(body)
+        self.server.own_calls.append((path, doc))
+        net, svc = objs.get(("network", parts[1])), objs.get(("container", doc["Container"]))
+        if net is None or svc is None:
+            self.send(404, {})
+            return True
+        eps = svc["NetworkSettings"]["Networks"]
+        if parts[2] == "connect":
+            taken = sum(
+                1
+                for (k, _), v in objs.items()
+                if k == "container" and parts[1] in v.get("NetworkSettings", {}).get("Networks", {})
+            )
+            eps[parts[1]] = {"NetworkID": net["Id"], "IPAddress": f"172.31.240.{2 + taken}"}
+        elif eps.pop(parts[1], None) is None:
+            self.send(404, {})
+            return True
+        self.send(200, {})
+        return True
 
     def answer_check(self, method, path, target):
         """Answer the proxy's own inspect and list calls from the fake objects."""
@@ -385,8 +429,12 @@ def test_network_create_is_internal_without_masquerade_in_a_free_pool_subnet(env
     assert status == 200
     sent = json.loads(env["daemon"].seen[0][3])
     assert sent["Internal"] is True and sent["EnableIPv6"] is False
-    assert sent["Options"] == {"com.docker.network.bridge.enable_ip_masquerade": "false"}
-    assert sent["IPAM"]["Config"] == [{"Subnet": "172.31.240.16/28"}]  # .0/28 is taken by trialnet
+    assert sent["Options"] == {
+        "com.docker.network.bridge.enable_ip_masquerade": "false",
+        "com.docker.network.bridge.inhibit_ipv4": "true",  # no address on the host's bridge
+    }
+    # .0/28 is taken by trialnet; the first address is reserved for a gateway that is never configured
+    assert sent["IPAM"]["Config"] == [{"Subnet": "172.31.240.16/28", "Gateway": "172.31.240.17"}]
     assert sent["Labels"] == {"a": "b", dp.OWNER_LABEL: "1"}
 
 
@@ -476,46 +524,83 @@ def test_client_headers_are_not_passed_through(env):
     assert all("x-registry-auth" not in h for _, _, h, _ in env["daemon"].seen)
 
 
-# ------------------------------------------------------------------ firewall, config
+# ------------------------------------------------------------------ isolation, config
+
+ISOLATED = {"Internal": True, "Options": {dp.MASQUERADE: "false", dp.INHIBIT: "true"}}
 
 
-class FakeIptables:
-    def __init__(self, chains):
-        self.chains = chains
+class StubDaemon:
+    """Answers isolation_status's reads: trial networks by id, service containers by name."""
 
-    def __call__(self, argv, **_):
-        chain = argv[-1]
-        rules = self.chains.get(chain)
+    def __init__(self, nets: dict, containers: dict):
+        self.nets, self.containers = nets, containers
 
-        class P:
-            returncode = 0 if rules is not None else 1
-            stdout = "\n".join([f"-N {chain}", *(rules or [])])
-
-        return P()
-
-
-GOOD = {
-    "FORWARD": ["-A FORWARD -s 172.31.240.0/20 -j EVALS-EGRESS", "-A FORWARD -j DOCKER-USER"],
-    "DOCKER-USER": ["-A DOCKER-USER -s 172.31.240.0/20 -j EVALS-EGRESS", "-A DOCKER-USER -j RETURN"],
-    "INPUT": ["-A INPUT -s 172.31.240.0/20 -j EVALS-INPUT"],
-    "EVALS-EGRESS": ["-A EVALS-EGRESS -d 172.31.248.1/32 -p tcp -j ACCEPT", "-A EVALS-EGRESS -j DROP"],
-    "EVALS-INPUT": ["-A EVALS-INPUT -j DROP"],
-}
+    def get(self, url):
+        if url.startswith("/networks?"):
+            return [{"Id": f"{name}-id"} for name in self.nets]
+        if url.startswith("/networks/"):
+            name = url.split("/")[2].removesuffix("-id")
+            return {"Name": name, **self.nets[name]} if name in self.nets else None
+        return self.containers.get(url.split("/")[2])
 
 
-def test_firewall_status_needs_every_jump_first_and_drop_last():
+def svc(networks=("evalskills-egress", "t1"), forward="0", running=True, mode="evalskills-egress", ports=None):
+    return {
+        "State": {"Running": running},
+        "HostConfig": {"NetworkMode": mode, "Sysctls": {"net.ipv4.ip_forward": forward}, "PortBindings": ports},
+        "NetworkSettings": {"Networks": {n: {} for n in networks}},
+    }
+
+
+def isolation(nets=None, **gateway):
     cfg = dp.load_config({"eval_uid": 1000})
-    assert dp.firewall_status(cfg, FakeIptables(GOOD)) == (True, "ok")
-    open_end = {**GOOD, "EVALS-EGRESS": GOOD["EVALS-EGRESS"][:1]}
-    assert "DROP" in dp.firewall_status(cfg, FakeIptables(open_end))[1]
-    docker_on_top = {**GOOD, "FORWARD": ["-A FORWARD -j DOCKER-USER", *GOOD["FORWARD"]]}
-    assert dp.firewall_status(cfg, FakeIptables(docker_on_top)) == (True, "ok")  # after every dockerd start
-    other_on_top = {**GOOD, "FORWARD": ["-A FORWARD -j ACCEPT", *GOOD["FORWARD"]]}
-    assert dp.firewall_status(cfg, FakeIptables(other_on_top))[0] is False
-    user_moved = {**GOOD, "DOCKER-USER": GOOD["DOCKER-USER"][::-1]}
-    assert dp.firewall_status(cfg, FakeIptables(docker_on_top | user_moved))[0] is False
-    missing = {k: v for k, v in GOOD.items() if k != "EVALS-INPUT"}
-    assert dp.firewall_status(cfg, FakeIptables(missing))[0] is False
+    nets = {"t1": ISOLATED} if nets is None else nets
+    proxy = svc(networks=("evalskills-egress", *nets))
+    containers = {"evalskills-gateway": svc(**gateway), "evalskills-egress-proxy": proxy}
+    return dp.isolation_status(cfg, StubDaemon(nets, containers))
+
+
+def test_isolation_holds_with_flagged_networks_and_quiet_services():
+    assert isolation() == (True, "ok")
+    assert isolation(nets={}, networks=("evalskills-egress",)) == (True, "ok")  # no trial running
+
+
+@pytest.mark.parametrize(
+    "net",
+    [
+        {**ISOLATED, "Internal": False},
+        {**ISOLATED, "Options": {dp.MASQUERADE: "false"}},  # the bridge would get an address on the host
+        {**ISOLATED, "Options": {dp.MASQUERADE: "true", dp.INHIBIT: "true"}},
+    ],
+)
+def test_isolation_fails_when_a_trial_network_lost_a_flag(net):
+    ok, why = isolation(nets={"t1": net})
+    assert ok is False and "lost its isolation flags" in why
+
+
+@pytest.mark.parametrize(
+    ("gateway", "why"),
+    [
+        ({"running": False}, "not running"),
+        ({"forward": "1"}, "may forward"),
+        ({"forward": None}, "may forward"),  # unset: the namespace copies the host's 1
+        ({"mode": "host"}, "host network"),
+        ({"ports": {"8443/tcp": [{"HostPort": "8443"}]}}, "publishes a port"),
+        ({"networks": ("evalskills-egress", "t1", "appnet")}, "neither its egress network nor a trial's"),
+        ({"networks": ("t1",)}, "neither its egress network nor a trial's"),
+    ],
+)
+def test_isolation_fails_when_a_service_could_bridge_or_leak(gateway, why):
+    ok, reason = isolation(**gateway)
+    assert ok is False and why in reason
+
+
+def test_isolation_endpoint_answers_from_the_daemon(env):
+    status, doc = call(env, "GET", "/_evalskills/isolation")
+    assert status == 503 and "trialnet lost its isolation flags" in doc["why"]
+    env["daemon"].objects[("network", "trialnet")].update(ISOLATED)
+    assert call(env, "GET", "/_evalskills/isolation") == (200, {"ok": True, "why": "ok"})
+    assert forwarded(env) == []
 
 
 @pytest.mark.parametrize(
@@ -525,7 +610,8 @@ def test_firewall_status_needs_every_jump_first_and_drop_last():
         {"eval_uid": 0},
         {"eval_uid": 1000, "bind_root": "/"},
         {"eval_uid": 1000, "bind_root": "/srv/../etc"},
-        {"eval_uid": 1000, "network_pool": "10.0.0.0/8"},
+        {"eval_uid": 1000, "network_pool": "not-a-network"},
+        {"eval_uid": 1000, "egress_network": "a b"},
         {"eval_uid": 1000, "typo": 1},
         {"eval_uid": 1000, "idle_timeout_s": 600},  # shorter than a trial
     ],
@@ -536,13 +622,15 @@ def test_bad_config_is_refused(raw_cfg):
 
 
 def test_example_config_loads():
-    path = Path(__file__).resolve().parents[1] / "deploy" / "gvisor" / "docker-proxy.example.json"
+    path = Path(__file__).resolve().parents[1] / "deploy" / "gvisor" / "host" / "docker-proxy.json"
     raw = json.loads(path.read_text())
     assert raw["builds"]["allowed_dockerfiles"].endswith("/deploy/gvisor/build/allowed-dockerfiles.txt")
-    raw["builds"]["allowed_dockerfiles"] = str(path.parent / "build" / "allowed-dockerfiles.txt")  # the checkout's
+    raw["builds"]["allowed_dockerfiles"] = str(
+        path.parent.parent / "build" / "allowed-dockerfiles.txt"
+    )  # the checkout's
     cfg = dp.load_config(raw)
     assert len(cfg["builds"]["allowlist"]) == 4
-    assert cfg["bind_root"] == "/srv/evals/run" and cfg["network_pool"].subnet_of(cfg["firewall_scope"])
+    assert cfg["bind_root"] == "/srv/evals/run" and cfg["egress_network"] == "evalskills-egress"
 
 
 def test_socket_is_born_0660_and_its_folder_must_be_private(env, tmp_path):
@@ -555,3 +643,95 @@ def test_socket_is_born_0660_and_its_folder_must_be_private(env, tmp_path):
             dp.make_server({**env["cfg"], "listen": str(shared / "p.sock")})
     finally:
         shared.rmdir()
+
+
+def test_container_create_attaches_the_services_and_names_them_first(env):
+    status, _ = call(env, "POST", "/v1.47/containers/create", create_body(env, ExtraHosts=["db:10.0.0.9"]))
+    assert status == 200
+    sent = json.loads(env["daemon"].seen[0][3])
+    assert sent["HostConfig"]["ExtraHosts"] == ["evals-gateway:172.31.240.2", "evals-proxy:172.31.240.3", "db:10.0.0.9"]
+    assert env["daemon"].own_calls == [
+        ("/networks/trialnet/connect", {"Container": "evalskills-gateway"}),
+        ("/networks/trialnet/connect", {"Container": "evalskills-egress-proxy"}),
+    ]
+
+
+def test_a_second_container_on_the_network_reuses_the_attached_services(env):
+    assert call(env, "POST", "/containers/create", create_body(env))[0] == 200
+    assert call(env, "POST", "/containers/create", create_body(env))[0] == 200
+    assert len(env["daemon"].own_calls) == 2
+    second = json.loads(env["daemon"].seen[1][3])["HostConfig"]["ExtraHosts"]
+    assert second == ["evals-gateway:172.31.240.2", "evals-proxy:172.31.240.3"]
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "evals-gateway:1.2.3.4",
+        "EVALS-GATEWAY:172.31.248.1",
+        " evals-gateway :8.8.8.8",
+        "evals-gateway=1.2.3.4",
+        "evals-proxy:1.2.3.4",
+        "evals-proxy=1.2.3.4",
+    ],
+)
+def test_container_create_refuses_its_own_service_names(env, entry):
+    assert call(env, "POST", "/v1.47/containers/create", create_body(env, ExtraHosts=[entry]))[0] == 403
+    assert forwarded(env) == [] and env["daemon"].own_calls == []
+
+
+@pytest.mark.parametrize("hosts", ["db:10.0.0.9", [1]])
+def test_container_create_refuses_extra_hosts_that_are_not_strings(env, hosts):
+    assert call(env, "POST", "/v1.47/containers/create", create_body(env, ExtraHosts=hosts))[0] == 403
+    assert forwarded(env) == []
+
+
+def test_container_create_waits_for_the_services_to_run(env):
+    env["daemon"].objects[("container", "evalskills-gateway")]["State"]["Running"] = False
+    assert call(env, "POST", "/containers/create", create_body(env))[0] == 503
+    assert forwarded(env) == [] and env["daemon"].own_calls == []
+
+
+def test_container_create_refuses_a_service_name_held_by_a_trial(env):
+    env["daemon"].objects[("container", "evalskills-gateway")]["Config"]["Labels"] = OWNED
+    assert call(env, "POST", "/containers/create", create_body(env))[0] == 502
+    assert forwarded(env) == [] and env["daemon"].own_calls == []
+
+
+@pytest.mark.parametrize("name", ["evalskills-gateway", "/evalskills-egress-proxy"])
+def test_a_trial_container_may_not_take_a_services_name(env, name):
+    assert call(env, "POST", f"/containers/create?name={name}", create_body(env))[0] == 403
+    assert forwarded(env) == []
+
+
+def test_network_delete_detaches_the_services_first(env):
+    assert call(env, "POST", "/containers/create", create_body(env))[0] == 200
+    assert call(env, "DELETE", "/v1.47/networks/trialnet")[0] == 200
+    assert env["daemon"].own_calls[2:] == [
+        ("/networks/trialnet/disconnect", {"Container": "evalskills-gateway", "Force": True}),
+        ("/networks/trialnet/disconnect", {"Container": "evalskills-egress-proxy", "Force": True}),
+    ]
+    assert forwarded(env)[-1] == ("DELETE", "/v1.47/networks/trialnet")
+
+
+def test_a_client_may_not_attach_or_detach_a_service(env):
+    for verb in ("connect", "disconnect"):
+        assert call(env, "POST", f"/networks/trialnet/{verb}", {"Container": "evalskills-gateway"})[0] == 403
+    assert forwarded(env) == []
+
+
+@pytest.mark.parametrize(
+    "services",
+    [{}, {"Evals_Gateway": "g"}, {"evals-gateway": "a b"}, {"a": "same", "b": "same"}, ["evals-gateway"]],
+)
+def test_config_refuses_bad_services(env, services):
+    with pytest.raises(dp.ConfigError):
+        dp.load_config({**env["cfg"], "services": services, "network_pool": "172.31.240.0/21"})
+
+
+def test_container_create_without_a_network_gets_no_evals_gateway(env):
+    body = create_body(env, NetworkMode="none")
+    body["NetworkingConfig"] = {}
+    assert call(env, "POST", "/v1.47/containers/create", body)[0] == 200
+    sent = json.loads(env["daemon"].seen[0][3])
+    assert "ExtraHosts" not in sent["HostConfig"] or not sent["HostConfig"]["ExtraHosts"]
