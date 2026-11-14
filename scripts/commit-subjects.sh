@@ -11,7 +11,13 @@ close_re='\b(close[sd]?|fix(e[sd])?|resolve[sd]?) +#[0-9]+'
 fail=0
 check() {
   local message="$1" subject="${1%%$'\n'*}"
-  if ! [[ "$subject" =~ $subject_re ]]; then echo "not a Conventional Commit subject: $subject"; fail=1; fi
+  if [[ "$subject" =~ ^(fixup|squash|amend)!\  ]]; then
+    echo "unsquashed commit: $subject (fold it first: GIT_SEQUENCE_EDITOR=true git rebase -i --autosquash origin/main)"
+    fail=1
+  elif ! [[ "$subject" =~ $subject_re ]]; then
+    echo "not a Conventional Commit subject: $subject"
+    fail=1
+  fi
   if (( ${#subject} > 80 )); then echo "subject over 80 characters: $subject"; fail=1; fi
   if grep -qiE "$close_re" <<<"$message"; then echo "closing keyword in commit message: $subject"; fail=1; fi
 }

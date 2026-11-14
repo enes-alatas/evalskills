@@ -23,7 +23,7 @@ the pr-assets branch (pr-<n>/). Fixture or public catalog data only. "none" if n
 
 ## Verification
 
-- [ ] `ruff check`, `ruff format --check`, `pytest` and `scripts/secret-scan.sh` pass locally.
+- [ ] `scripts/check.sh` passes locally (the pre-push hook runs it).
 - [ ] No unredacted credential appears in this PR, its commits or any attachment. Screenshots come from the fixture
       catalog.
 - [ ] No score is invented, estimated or hand-edited. Failed, unsupported and inconclusive runs keep explicit

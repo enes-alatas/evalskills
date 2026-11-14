@@ -95,8 +95,6 @@ To report a problem, see `CONTRIBUTING.md`. For a vulnerability, see `SECURITY.m
 `AGENTS.md`, then `docs/CONVENTIONS.md`. Every change lands by PR, from a typed issue, with green CI. Before pushing:
 
 ```bash
-ln -s ../../scripts/pre-commit .git/hooks/pre-commit   # once: secret scan on every commit (needs gitleaks 8.30.1)
-uvx ruff check . && uvx ruff format --check .
-python3 -m pytest -q
-scripts/secret-scan.sh
+scripts/install-hooks.sh   # once per clone: the commit and push hooks
+scripts/check.sh           # what CI's checks job runs; the pre-push hook runs it too
 ```
