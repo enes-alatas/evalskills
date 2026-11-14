@@ -240,6 +240,14 @@ def log(event: str, **fields) -> None:
     )
 
 
+def upstream_socket(resp):
+    """The socket under an urllib response (plain or TLS), so a read can be given a deadline; None if not found."""
+    try:
+        return resp.fp.raw._sock
+    except AttributeError:
+        return None
+
+
 def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
     allowed = set(cfg["allowed_models"])
 
@@ -391,19 +399,38 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
 
             If the client goes away, even before the headers are written, keep reading upstream with writes off: those
             tokens are billed either way, and the usage chunk comes last. Each call's output is capped (max_tokens is
-            always set for chat), and the read after a hang-up stops at drain_timeout_s overall.
+            always set for chat), and the read after a hang-up stops at drain_timeout_s overall, even while upstream
+            sends nothing.
             """
             self.send_header("Cache-Control", "no-cache")
             self.close_connection = True  # no Content-Length: the stream ends when we close
             client = True
-            hung_up_at = None
+            deadline = None  # set when the client hangs up
+
+            def hung_up():
+                nonlocal client, deadline
+                client, deadline = False, time.monotonic() + cfg["drain_timeout_s"]
+
             try:
                 self.end_headers()  # the first write to the client
             except OSError:
-                client, hung_up_at = False, time.monotonic()
-            for line in resp:
-                if hung_up_at is not None and time.monotonic() - hung_up_at > cfg["drain_timeout_s"]:
+                hung_up()
+            while True:
+                if deadline is not None:
+                    left = deadline - time.monotonic()
+                    sock = upstream_socket(resp)
+                    if left <= 0 or sock is None:
+                        log("drain_timeout", run=run_id)
+                        break
+                    sock.settimeout(left)  # the deadline holds while upstream is silent, too
+                try:
+                    line = resp.readline()
+                except TimeoutError:
+                    if deadline is None:
+                        raise  # the client is still there: upstream_timeout_s ran out, as before
                     log("drain_timeout", run=run_id)
+                    break
+                if not line:
                     break
                 if line.startswith(b"data: {"):
                     try:
@@ -417,7 +444,7 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
                         self.wfile.write(line)
                         self.wfile.flush()
                     except OSError:  # the client hung up
-                        client, hung_up_at = False, time.monotonic()
+                        hung_up()
             meter()
 
     return Handler
