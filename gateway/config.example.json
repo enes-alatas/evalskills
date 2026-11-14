@@ -10,5 +10,8 @@
   "per_day_requests": 2000,
   "requests_per_minute": 30,
   "max_rate_wait_s": 120,
-  "upstream_timeout_s": 300
+  "upstream_timeout_s": 300,
+  "max_output_tokens": 4096,
+  "per_run_unmetered": 3,
+  "drain_timeout_s": 120
 }
