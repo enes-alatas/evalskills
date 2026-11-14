@@ -25,11 +25,11 @@ on:
         description: issue number to label and reply on
         required: true
       author_association:
-        description: treat the issue's author as this (empty uses the issue's own)
+        description: treat the issue's author as this (ISSUE uses the issue's own)
         required: false
-        default: ""
+        default: ISSUE
         type: choice
-        options: ["", NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR]
+        options: [ISSUE, NONE, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR]
 
 # An explicit block is the whole grant: checkout needs contents: read on a private repo.
 permissions:
