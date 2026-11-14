@@ -43,6 +43,12 @@ them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these tw
   mirrors, nodejs.org, raw.githubusercontent.com for nvm, registry.npmjs.org). Add a host only after reading why it
   was needed.
 - Streamed completions arrive with a usage chunk. Calls without one show as `unmetered` in `usage`.
+- A call's tokens are counted before the client gets the end of the reply, so the next request is admitted against
+  them. A client that hangs up mid-stream is still counted: the gateway reads on to the usage chunk, for at most
+  `drain_timeout_s` (120 s).
+- A chat request without an output limit gets `max_tokens` set to `max_output_tokens` (4096), or to what the run has
+  left if that's less. After `per_run_unmetered` (3) calls whose usage never arrived, the run is refused, so the token
+  cap fails closed.
 
 ## Running the pilot (#121; after the step-0 checks pass)
 The runner is `pipeline/live_pilot.py`. It runs the skills in `pilot/skills.tsv` one at a time, with the baseline

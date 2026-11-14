@@ -48,6 +48,14 @@ DEFAULTS = {
     "requests_per_minute": 30,
     "max_rate_wait_s": 120,
     "upstream_timeout_s": 300,
+    # A chat request without an output limit gets this one (or what the run has left, if less), so every call's
+    # spend is bounded before it starts. It stays within what the allowed models accept.
+    "max_output_tokens": 4096,
+    # Calls whose usage never arrived (no usage chunk, a failed read) can't be counted against per_run_tokens; after
+    # this many, the run is refused, so the token cap fails closed (ADR-0004).
+    "per_run_unmetered": 3,
+    # After a client hangs up mid-stream, reading on to the usage chunk stops after this long overall.
+    "drain_timeout_s": 120,
 }
 
 
@@ -77,7 +85,15 @@ def load_config(path: str) -> dict:
         raise ConfigError("upstream_base_url must be https")
     if not cfg["allowed_models"] or not all(isinstance(m, str) and m for m in cfg["allowed_models"]):
         raise ConfigError("allowed_models must list at least one model ID")
-    for k in ("per_run_requests", "per_run_tokens", "per_day_requests", "requests_per_minute"):
+    for k in (
+        "per_run_requests",
+        "per_run_tokens",
+        "per_day_requests",
+        "requests_per_minute",
+        "max_output_tokens",
+        "per_run_unmetered",
+        "drain_timeout_s",
+    ):
         if not isinstance(cfg[k], int) or cfg[k] <= 0:
             raise ConfigError(f"{k} must be a positive integer")
     cfg["upstream_base_url"] = cfg["upstream_base_url"].rstrip("/")
@@ -148,7 +164,8 @@ class State:
         day = today()
         with self.lock:
             run = self.db.execute(
-                "SELECT revoked, requests, prompt_tokens + completion_tokens FROM runs WHERE run_id = ?", (run_id,)
+                "SELECT revoked, requests, prompt_tokens + completion_tokens, unmetered FROM runs WHERE run_id = ?",
+                (run_id,),
             ).fetchone()
             daily = self.db.execute("SELECT requests FROM days WHERE day = ?", (day,)).fetchone()
             why = None
@@ -158,6 +175,8 @@ class State:
                 why = "run request cap reached"
             elif run[2] >= cfg["per_run_tokens"]:
                 why = "run token cap reached"
+            elif run[3] >= cfg["per_run_unmetered"]:
+                why = "run unmetered cap reached"
             elif daily and daily[0] >= cfg["per_day_requests"]:
                 why = "daily request cap reached"
             if why:
@@ -286,9 +305,13 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
             if why:
                 return self.refuse(429, why, run_id)
             left = cfg["per_run_tokens"] - run["tokens"]  # a requested output limit never exceeds what the run has left
-            for k in ("max_tokens", "max_completion_tokens"):
-                if isinstance(body.get(k), int) and body[k] > left:
-                    body[k] = max(left, 1)
+            limits = [k for k in ("max_tokens", "max_completion_tokens") if k in body]
+            if self.path == "/v1/chat/completions" and not limits:  # no limit asked for: set one
+                body["max_tokens"] = min(left, cfg["max_output_tokens"])
+                limits = ["max_tokens"]
+            for k in limits:
+                if not isinstance(body[k], int) or body[k] > left:
+                    body[k] = max(min(left, cfg["max_output_tokens"]), 1)
             self.forward(run_id, body, stream)
 
         def forward(self, run_id: str, body: dict, stream: bool) -> None:
@@ -322,11 +345,24 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 log("upstream_unreachable", run=run_id, why=type(e).__name__)
                 return self.reply(502, {"error": {"message": "upstream unreachable", "type": "gateway_upstream"}})
-            with resp:
-                self.send_response(resp.status)
-                self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
-                usage = self.relay_stream(resp) if stream else self.relay_body(resp)
-            state.meter(run_id, usage)
+            # Usage is metered before the client sees the end of the reply, so the run's next request is admitted
+            # against counted tokens. A client that hangs up is still metered: see relay_stream.
+            seen = {"usage": None, "metered": False}
+
+            def meter():
+                if not seen["metered"]:
+                    seen["metered"] = True
+                    usage = seen["usage"] if isinstance(seen["usage"], dict) else None
+                    state.meter(run_id, usage)  # no usage seen: counted as unmetered
+
+            try:
+                with resp:
+                    self.send_response(resp.status)
+                    self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
+                    self.relay_stream(resp, seen, meter, run_id) if stream else self.relay_body(resp, seen, meter)
+            finally:
+                meter()  # the relay failed first: whatever usage it saw still counts
+            usage = seen["usage"] if isinstance(seen["usage"], dict) else None
             log(
                 "forwarded",
                 run=run_id,
@@ -338,31 +374,51 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
                 completion_tokens=(usage or {}).get("completion_tokens"),
             )
 
-        def relay_body(self, resp) -> dict | None:
+        def relay_body(self, resp, seen, meter) -> None:
             payload = resp.read()
+            try:
+                seen["usage"] = json.loads(payload).get("usage")
+            except (ValueError, AttributeError):
+                pass
+            meter()
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-            try:
-                return json.loads(payload).get("usage")
-            except (ValueError, AttributeError):
-                return None
 
-        def relay_stream(self, resp) -> dict | None:
-            """Pass server-sent events through line by line; keep the last usage object seen."""
+        def relay_stream(self, resp, seen, meter, run_id: str) -> None:
+            """Pass server-sent events through line by line, keeping the last usage object seen. It is metered just
+            before `data: [DONE]` is written, or when upstream ends.
+
+            If the client goes away, even before the headers are written, keep reading upstream with writes off: those
+            tokens are billed either way, and the usage chunk comes last. Each call's output is capped (max_tokens is
+            always set for chat), and the read after a hang-up stops at drain_timeout_s overall.
+            """
             self.send_header("Cache-Control", "no-cache")
             self.close_connection = True  # no Content-Length: the stream ends when we close
-            self.end_headers()
-            usage = None
+            client = True
+            hung_up_at = None
+            try:
+                self.end_headers()  # the first write to the client
+            except OSError:
+                client, hung_up_at = False, time.monotonic()
             for line in resp:
-                self.wfile.write(line)
-                self.wfile.flush()
+                if hung_up_at is not None and time.monotonic() - hung_up_at > cfg["drain_timeout_s"]:
+                    log("drain_timeout", run=run_id)
+                    break
                 if line.startswith(b"data: {"):
                     try:
-                        usage = json.loads(line[6:]).get("usage") or usage
-                    except ValueError:
+                        seen["usage"] = json.loads(line[6:]).get("usage") or seen["usage"]
+                    except (ValueError, AttributeError):
                         pass
-            return usage
+                elif line.startswith(b"data: [DONE]"):
+                    meter()
+                if client:
+                    try:
+                        self.wfile.write(line)
+                        self.wfile.flush()
+                    except OSError:  # the client hung up
+                        client, hung_up_at = False, time.monotonic()
+            meter()
 
     return Handler
 

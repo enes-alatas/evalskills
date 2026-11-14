@@ -1,8 +1,12 @@
 """The model gateway (#121, PR A): per-run tokens, model and endpoint allowlists, caps that persist, metering."""
 
+import http.client
 import json
+import socket
+import struct
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,15 +30,28 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         Upstream.seen.append({"path": self.path, "auth": self.headers.get("Authorization"), "body": body})
+        time.sleep(body.get("test_delay", 0))  # upstream takes a while to answer
+        usage = b"" if body.get("test_no_usage") else b',"usage":{"prompt_tokens":7,"completion_tokens":3}'
         if body.get("stream"):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
+            for _ in range(body.get("test_chunks", 0)):  # a long answer, slowly: the client can hang up midway
+                self.wfile.write(b'data: {"choices":[{"delta":{"content":"' + b"x" * 1000 + b'"}}]}\n\n')
+                self.wfile.flush()
+                time.sleep(0.01)
             self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
-            self.wfile.write(b'data: {"choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\n')
+            self.wfile.write(b'data: {"choices":[]' + usage + b"}\n\n")
             self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            time.sleep(body.get("test_linger", 0))  # upstream keeps the connection open after [DONE]
             return
-        out = json.dumps({"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}).encode()
+        out = (
+            {"choices": []}
+            if body.get("test_no_usage")
+            else {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+        )
+        out = json.dumps(out).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(out)))
@@ -94,6 +111,112 @@ def test_forwards_with_the_real_key_and_meters(env):
     assert Upstream.seen[0]["path"] == "/v1/chat/completions"
     (u,) = env["state"].usage("run-1")
     assert (u["requests"], u["prompt_tokens"], u["completion_tokens"]) == (1, 10, 5)
+
+
+def test_a_body_is_metered_before_the_client_has_it(env, monkeypatch):
+    real = env["state"].meter
+    monkeypatch.setattr(env["state"], "meter", lambda *a: (time.sleep(0.3), real(*a)))  # a slow database write
+    token = env["state"].issue("run-1")
+    assert call(env["base"], "/v1/chat/completions", token, chat())[0] == 200
+    (u,) = env["state"].usage("run-1")
+    assert (u["prompt_tokens"], u["completion_tokens"]) == (10, 5)
+
+
+def stream_until_done(base, token, body):
+    """Reads a streamed reply up to its [DONE] line, without waiting for the connection to close."""
+    host, port = base.removeprefix("http://").split(":")
+    conn = http.client.HTTPConnection(host, int(port), timeout=10)
+    conn.request(
+        "POST",
+        "/v1/chat/completions",
+        json.dumps(body),
+        {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+    )
+    resp = conn.getresponse()
+    while not resp.fp.readline().startswith(b"data: [DONE]"):
+        pass
+    return conn
+
+
+def test_a_stream_is_metered_before_the_client_sees_done(env):
+    token = env["state"].issue("run-1")
+    conn = stream_until_done(env["base"], token, chat(stream=True, test_linger=1))
+    (u,) = env["state"].usage("run-1")  # upstream is still open, so only metering before [DONE] counts this
+    conn.close()
+    assert (u["prompt_tokens"], u["completion_tokens"], u["unmetered"]) == (7, 3, 0)
+
+
+def test_a_client_that_hangs_up_mid_stream_is_still_metered(env):
+    token = env["state"].issue("run-1")
+    hang_up(env["base"], token, chat(stream=True, test_chunks=100))
+    u = settled_usage(env["state"], "run-1")
+    assert (u["prompt_tokens"], u["completion_tokens"], u["unmetered"]) == (7, 3, 0)
+
+
+def hang_up(base, token, body, before_status=False):
+    """Sends a streamed request and goes away: after the status line, or (before_status) with a reset at once."""
+    host, port = base.removeprefix("http://").split(":")
+    payload = json.dumps(body).encode()
+    s = socket.create_connection((host, int(port)), timeout=10)
+    s.sendall(
+        b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+        + f"Authorization: Bearer {token}\r\nContent-Length: {len(payload)}\r\n\r\n".encode()
+        + payload
+    )
+    if before_status:
+        time.sleep(0.2)  # the gateway is now waiting on upstream
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))  # close sends a reset
+    else:
+        assert b" 200 " in s.recv(4096).split(b"\r\n", 1)[0]  # the stream has started
+    s.close()
+
+
+def settled_usage(state, run_id, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        (u,) = state.usage(run_id)
+        if u["prompt_tokens"] or u["unmetered"]:
+            return u
+        time.sleep(0.05)
+    return u
+
+
+def test_a_client_that_resets_before_the_headers_is_still_metered(env):
+    token = env["state"].issue("run-1")
+    hang_up(env["base"], token, chat(stream=True, test_delay=0.6), before_status=True)
+    u = settled_usage(env["state"], "run-1")
+    assert (u["prompt_tokens"], u["completion_tokens"], u["unmetered"]) == (7, 3, 0)
+
+
+def test_the_read_after_a_hang_up_stops_at_the_drain_deadline(env, monkeypatch):
+    monkeypatch.setitem(env["cfg"], "drain_timeout_s", 1)
+    token = env["state"].issue("run-1")
+    started = time.monotonic()
+    hang_up(env["base"], token, chat(stream=True, test_chunks=500))  # about 5 s of output
+    u = settled_usage(env["state"], "run-1")
+    assert u["unmetered"] == 1 and u["prompt_tokens"] == 0
+    assert time.monotonic() - started < 4
+
+
+def test_unmetered_calls_are_capped(env, monkeypatch):
+    monkeypatch.setitem(env["cfg"], "per_run_requests", 10)
+    token = env["state"].issue("run-1")
+    for stream in (False, True, False):
+        assert call(env["base"], "/v1/chat/completions", token, chat(stream=stream, test_no_usage=True))[0] == 200
+    (u,) = env["state"].usage("run-1")
+    assert u["unmetered"] == 3
+    code, body = call(env["base"], "/v1/chat/completions", token, chat())
+    assert code == 429 and b"unmetered cap" in body
+
+
+def test_a_chat_request_without_an_output_limit_gets_one(env):
+    token = env["state"].issue("run-1")
+    call(env["base"], "/v1/chat/completions", token, chat())
+    assert Upstream.seen[-1]["body"]["max_tokens"] == 1000  # what the run has left, under max_output_tokens
+    call(env["base"], "/v1/chat/completions", token, chat(max_completion_tokens="lots"))
+    assert Upstream.seen[-1]["body"]["max_completion_tokens"] == 985 and "max_tokens" not in Upstream.seen[-1]["body"]
+    call(env["base"], "/v1/embeddings", token, {"model": MODEL, "input": "x"})
+    assert "max_tokens" not in Upstream.seen[-1]["body"]
 
 
 @pytest.mark.parametrize("token", [None, "egw-not-issued", ""])
