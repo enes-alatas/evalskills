@@ -194,6 +194,7 @@ def trial(tmp_path, monkeypatch):
     monkeypatch.setattr(ev, "EVALUATOR_DIR", tmp_path)
     monkeypatch.setattr(tier3, "TRIAL_USER", pwd.getpwuid(os.geteuid()).pw_name)
     monkeypatch.setattr(tier3, "DAEMON_SOCKETS", (tmp_path / "no-daemon.sock",))  # CI's runner is in group docker
+    monkeypatch.setattr(tier3, "MIN_FREE_ROOT", 0)  # a CI runner's / may hold less than the host's minimum
     monkeypatch.setattr(tier3, "command", lambda sk, res, *_: ["sh", "-c", TRIAL, "sh", str(res), str(sk), str(seen)])
 
     def go(nap="0", mark="", timeout=60):
