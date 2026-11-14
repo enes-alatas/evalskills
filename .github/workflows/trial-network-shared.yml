@@ -1,0 +1,101 @@
+# Diagnostic, not for merge (#137): proves Enes's network shape on Docker 29.6.1, the host's version. Each trial gets an
+# internal network with no address on the host (inhibit_ipv4). The model gateway and the egress proxy (stand-ins here)
+# sit on a normal egress network and are attached to the trial network, so the trial reaches them directly. No NAT,
+# no evals0, no host firewall rules. No skill code and no model run here.
+name: trial-network-shared
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: [.github/workflows/trial-network-shared.yml]
+
+permissions:
+  contents: read
+
+env:
+  DOCKER_VERSION: 29.6.1
+
+jobs:
+  reach:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install Docker ${{ env.DOCKER_VERSION }}, the host's version
+        run: |
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+            | sudo tee /etc/apt/sources.list.d/docker.list
+          sudo apt-get update -q
+          v=$(apt-cache madison docker-ce | awk -v want="$DOCKER_VERSION" '$3 ~ "^5:" want "-" {print $3; exit}')
+          test -n "$v"
+          sudo apt-get install -y -q --allow-downgrades "docker-ce=$v" "docker-ce-cli=$v"
+          test "$(docker version --format '{{.Server.Version}}')" = "$DOCKER_VERSION"
+          docker pull -q python:3.12-slim
+      - name: Networks, stand-in services, a host listener and a neighbour
+        run: |
+          nohup python3 -m http.server --bind 0.0.0.0 9999 >/dev/null 2>&1 &  # a host service no trial may reach
+          docker network create egress
+          for n in 1 2; do
+            docker network create --internal --subnet "172.31.240.$(( (n - 1) * 16 ))/28" \
+              -o com.docker.network.bridge.inhibit_ipv4=true \
+              -o com.docker.network.bridge.enable_ip_masquerade=false "trial$n"
+          done
+          for svc in gateway:8443 proxy:3128; do
+            docker run -d --name "${svc%:*}" --network egress python:3.12-slim python -m http.server "${svc#*:}"
+            docker network connect trial1 "${svc%:*}"
+          done
+          docker run -d --name neighbour --network trial2 python:3.12-slim python -m http.server 8000
+          sleep 2
+          echo "--- host side: the trial bridges carry no IPv4 address"
+          for n in trial1 trial2; do
+            br="br-$(docker network inspect -f '{{printf "%.12s" .Id}}' "$n")"
+            ip -4 -o addr show dev "$br" | grep . && { echo "$n has a host address"; exit 1; } || echo "$n ($br): no IPv4 on the host"
+          done
+      - name: Write the probe
+        run: |
+          cat > "$RUNNER_TEMP/probe.py" <<'PROBE'
+          import os, socket, sys
+          e = os.environ
+          want = {
+              ("evals-gateway", 8443): True,
+              ("evals-proxy", 3128): True,
+              (e["GW_EGRESS"], 8443): False,  # the gateway's other leg, on the egress network
+              (e["NEIGHBOUR"], 8000): False,  # a container on another trial network
+              ("172.31.240.1", 9999): False,  # where the bridge address would be
+              ("172.17.0.1", 9999): False,  # docker0, the host
+              (e["HOST_IP"], 9999): False,  # the host itself
+              ("1.1.1.1", 443): False,  # the internet
+          }
+          bad = 0
+          for (host, port), ok in want.items():
+              try:
+                  socket.create_connection((host, port), timeout=4).close()
+                  got = True
+              except OSError:
+                  got = False
+              print(f"{host}:{port} reached={got} expected={ok}")
+              bad += got != ok
+          sys.exit(1 if bad else 0)
+          PROBE
+          cat > "$RUNNER_TEMP/probe.sh" <<'PROBE'
+          set -eu
+          ip_of() { docker inspect -f "{{(index .NetworkSettings.Networks \"$2\").IPAddress}}" "$1"; }
+          host_ip=$(ip -4 -o route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+          docker run --rm --network trial1 -v "$RUNNER_TEMP/probe.py:/probe.py:ro" \
+            --add-host "evals-gateway:$(ip_of gateway trial1)" --add-host "evals-proxy:$(ip_of proxy trial1)" \
+            -e GW_EGRESS="$(ip_of gateway egress)" -e NEIGHBOUR="$(ip_of neighbour trial2)" -e HOST_IP="$host_ip" \
+            python:3.12-slim sh -c 'cat /proc/net/route; python /probe.py'
+          for svc in gateway proxy; do
+            docker exec "$svc" python -c "import socket; socket.create_connection(('1.1.1.1', 443), timeout=5).close()"
+            echo "$svc reaches 1.1.1.1:443 through the egress network"
+          done
+          PROBE
+      - name: A trial reaches the two services directly, and nothing else
+        run: sh "$RUNNER_TEMP/probe.sh"
+      - name: The same after dockerd restarts
+        run: |
+          sudo systemctl restart docker
+          docker start gateway proxy neighbour
+          sleep 2
+          sh "$RUNNER_TEMP/probe.sh"
