@@ -33,17 +33,30 @@ class Upstream(BaseHTTPRequestHandler):
         time.sleep(body.get("test_delay", 0))  # upstream takes a while to answer
         usage = b"" if body.get("test_no_usage") else b',"usage":{"prompt_tokens":7,"completion_tokens":3}'
         if body.get("stream"):
+            chunked = body.get("test_chunked")  # HTTP/1.1 chunked, as a real upstream usually streams
+            if chunked:
+                self.protocol_version = "HTTP/1.1"
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
+            if chunked:
+                self.send_header("Transfer-Encoding", "chunked")
+                self.close_connection = True
             self.end_headers()
-            for _ in range(body.get("test_chunks", 0)):  # a long answer, slowly: the client can hang up midway
-                self.wfile.write(b'data: {"choices":[{"delta":{"content":"' + b"x" * 1000 + b'"}}]}\n\n')
+
+            def send(data):
+                self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data) if chunked else data)
                 self.wfile.flush()
+
+            for _ in range(body.get("test_chunks", 0)):  # a long answer, slowly: the client can hang up midway
+                send(b'data: {"choices":[{"delta":{"content":"' + b"x" * 1000 + b'"}}]}\n\n')
                 time.sleep(0.01)
-            self.wfile.write(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
-            self.wfile.write(b'data: {"choices":[]' + usage + b"}\n\n")
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
+            time.sleep(body.get("test_stall", 0))  # upstream goes silent mid-stream
+            send(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
+            send(b'data: {"choices":[]' + usage + b"}\n\n")
+            send(b"data: [DONE]\n\n")
+            if chunked:
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
             time.sleep(body.get("test_linger", 0))  # upstream keeps the connection open after [DONE]
             return
         out = (
@@ -146,9 +159,10 @@ def test_a_stream_is_metered_before_the_client_sees_done(env):
     assert (u["prompt_tokens"], u["completion_tokens"], u["unmetered"]) == (7, 3, 0)
 
 
-def test_a_client_that_hangs_up_mid_stream_is_still_metered(env):
+@pytest.mark.parametrize("chunked", [False, True])
+def test_a_client_that_hangs_up_mid_stream_is_still_metered(env, chunked):
     token = env["state"].issue("run-1")
-    hang_up(env["base"], token, chat(stream=True, test_chunks=100))
+    hang_up(env["base"], token, chat(stream=True, test_chunks=100, test_chunked=chunked))
     u = settled_usage(env["state"], "run-1")
     assert (u["prompt_tokens"], u["completion_tokens"], u["unmetered"]) == (7, 3, 0)
 
@@ -196,6 +210,19 @@ def test_the_read_after_a_hang_up_stops_at_the_drain_deadline(env, monkeypatch):
     u = settled_usage(env["state"], "run-1")
     assert u["unmetered"] == 1 and u["prompt_tokens"] == 0
     assert time.monotonic() - started < 4
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_the_drain_deadline_holds_while_upstream_is_silent(env, monkeypatch, chunked):
+    monkeypatch.setitem(env["cfg"], "drain_timeout_s", 1)  # upstream_timeout_s stays 300
+    token = env["state"].issue("run-1")
+    started = time.monotonic()
+    hang_up(env["base"], token, chat(stream=True, test_chunks=20, test_stall=6, test_chunked=chunked))
+    u = settled_usage(env["state"], "run-1")
+    assert u["unmetered"] == 1 and u["prompt_tokens"] == 0
+    # Measured from before the request: 0.2 s of chunks, the 1 s deadline, and slack for a busy CI runner. Without
+    # the fix the call settles only when the 6 s stall ends.
+    assert time.monotonic() - started < 3.5
 
 
 def test_unmetered_calls_are_capped(env, monkeypatch):
