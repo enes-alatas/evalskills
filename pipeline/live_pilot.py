@@ -7,7 +7,7 @@ docs/EXPERIMENT_LOG.md publishes per-skill results).
 
 Run on the VPS, as root, after deploy/gvisor/ and deploy/live/ are set up. SkillEvaluator itself runs as the trial
 user (tier3.TRIAL_USER), through the socket proxy:
-  DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \\
+  DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 \\
   TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \\
   python3 -I pipeline/live_pilot.py [--only SLUG] [--dry-run]
 """

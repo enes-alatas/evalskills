@@ -1,27 +1,29 @@
 # Live pilot services: model gateway and trial egress proxy (DRAFT, untested until step 0)
 
 The internal pilot (#121) only. Nothing here serves the public board (ADR-0007). These two run on the **main**
-Docker daemon, with host networking, listening on `br-evals` (172.31.248.1), the eval daemon's bridge:
+Docker daemon, on their own network `evalskills-egress` (172.31.248.0/24), publish nothing, and run with
+`ip_forward=0` (#137, ADR-0003 amended 2026-11-14):
 
 | Service | Port | Holds | Reaches |
 | --- | --- | --- | --- |
-| `gateway` (`gateway/gateway.py`) | 8443 | the model key, as a compose secret | the upstream in `gateway.json` (NVIDIA Build) |
-| `egress-proxy` (`gateway/egress_proxy.py`) | 3128 | nothing | the hostnames in `egress-proxy.json`, public addresses only |
+| `gateway` (`gateway/gateway.py`), `172.31.248.2` | 8443 | the model key, as a compose secret | the upstream in `gateway.json` (NVIDIA Build) |
+| `egress-proxy` (`gateway/egress_proxy.py`), `172.31.248.3` | 3128 | nothing | the hostnames in `egress-proxy.json`, public addresses only |
 
-Trials reach these two ports and nothing else (`deploy/gvisor/firewall.sh`).
+The socket proxy attaches both to each trial's network, which is internal and has no address on the host, and names
+them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these two and nothing else.
 
-## Setup (as root, after `deploy/gvisor/` steps 1-3)
+## Setup (as root, after `deploy/gvisor/host/` steps 1-8)
 1. The key. In bash, paste it at the prompt, never on a command line, and never anywhere else:
    `install -d -m 0700 /etc/evalskills/secrets && (umask 077; read -rs K && printf '%s\n' "$K" > /etc/evalskills/secrets/model_key; unset K)`,
    then `chown 10002:10002 /etc/evalskills/secrets/model_key && chmod 0400 /etc/evalskills/secrets/model_key`.
    Compose mounts a file secret as-is, so the file is owned by the gateway's uid and by nobody else.
-2. `docker compose -f deploy/live/compose.yaml up -d --build`. `docker logs evalskills-gateway` shows `listening`.
-3. In `/etc/docker-evals/firewall.env`, set `GATEWAY_IP=172.31.248.1`, `GATEWAY_PORT=8443`,
-   `PROXY_IP=172.31.248.1` and `PROXY_PORT=3128`, then `systemctl restart docker-evals`.
-4. Trials get the proxy from the Docker client config of the user that runs the pilot. In `~/.docker/config.json`:
-   `{"proxies": {"default": {"httpProxy": "http://172.31.248.1:3128", "httpsProxy": "http://172.31.248.1:3128",
-   "noProxy": "172.31.248.1"}}}`. Docker then sets `HTTP(S)_PROXY` and `NO_PROXY` in every container that client
-   creates. Without it, agent installs fail, and that is the safe failure.
+2. `sh deploy/gvisor/host/9-live.sh`, then again with `--yes`: `docker compose up -d --build` on
+   `/opt/evalskills/deploy/live/compose.yaml`. `docker logs evalskills-gateway` shows `listening`.
+3. Trials reach them only through the socket proxy's attach. The host side reaches the gateway at `172.31.248.2`,
+   which step 3 names `evals-gateway`.
+4. Trials get the proxy from the trial user's Docker client config, `/var/lib/evals/.docker/config.json` (step 8).
+   Docker then sets `HTTP(S)_PROXY` and `NO_PROXY` in every container that client creates. Without it, agent
+   installs fail, and that is the safe failure.
 5. A run token, for each run, copied to the runner's file without ever being printed:
    ```
    docker exec evalskills-gateway python3 -I /opt/gateway/gateway.py issue --config /etc/evalskills/gateway.json \
@@ -34,8 +36,8 @@ Trials reach these two ports and nothing else (`deploy/gvisor/firewall.sh`).
 ## Step-0 checks
 - From a trial container: the gateway answers `GET /v1/models` with a token, `https://registry.npmjs.org/` works
   through the proxy, and everything else (another host, the host's other ports, the LAN) fails.
-- Only trials use the proxy: from the app container and from an outside host, `172.31.248.1:3128` is refused
-  (`client not allowed`, or no route). The proxy serves `allowed_clients` (172.31.240.0/20) only. The gateway
+- Only trials use the proxy: from the app container and from the host, `172.31.248.3:3128` is refused
+  (`client not allowed`, or no route). The proxy serves `allowed_clients` (172.31.240.0/21, the trial networks) only. The gateway
   answers anyone who reaches it, but only with a valid run token.
 - `docker logs evalskills-egress-proxy` lists every `denied` host. The allowlist is a first guess (Debian and Ubuntu
   mirrors, nodejs.org, raw.githubusercontent.com for nvm, registry.npmjs.org). Add a host only after reading why it
@@ -48,19 +50,20 @@ arm on. Each run gets its own token, which is revoked when the run ends, and the
 record. Records go to `reports/pilot/results.jsonl`, which is never committed: the board shows no pilot result
 (ADR-0007), and the public build refuses any `mode: tier3` record.
 
-Prerequisites on the host: this repository, `uv`, and a SkillEvaluator checkout at the pinned version with its
-`tier3` extra (`SKILLEVALUATOR_DIR`). The Docker client `proxies` config from step 4 must be in the runner user's
-`~/.docker/config.json`.
+Prerequisites on the host: `deploy/gvisor/host/` steps 1-9. That gives this repository at `/opt/evalskills`,
+SkillEvaluator at the pinned version with its `tier3` extra at `/opt/skillevaluator` (`SKILLEVALUATOR_DIR`), and the
+trial user's Docker client `proxies` config. Start the socket proxy for the pilot and stop it afterwards:
+`systemctl start evalskills-docker-proxy`.
 
 ```
 python3 -I pipeline/live_pilot.py --dry-run          # the 16 planned runs; nothing starts
-DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://172.31.248.1:8443/v1 \
+DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 \
 TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \
 python3 -I pipeline/live_pilot.py --only obra__superpowers__skills__systematic-debugging   # one skill first
 ```
 
 `tier3.py` refuses to start anywhere but the socket proxy with `--env-mode gvisor`, while the proxy reports the
-trial firewall missing, with a real provider key in its environment, or without a token. SkillEvaluator runs as the
+trial isolation broken, with a real provider key in its environment, or without a token. SkillEvaluator runs as the
 trial user (`TIER3_TRIAL_USER`, default `evals`) in a fresh folder under `TIER3_RUN_ROOT` (`/srv/evals/run`), and
 root copies the report's plain files to `reports/` when the trial ends (ADR-0003, amended 2026-11-13).
 A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable

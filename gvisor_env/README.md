@@ -16,19 +16,18 @@ Tests: `tests/test_gvisor_env_mode.py` (it runs there; the plain test run skips 
 
 The runner never gets the daemon's socket. It talks to the Docker socket proxy, `gateway/docker_proxy.py`, which
 runs as root next to the daemon. Its docstring lists the rules: allowlisted routes and fields, runsc forced, own
-objects only, no builds or pulls, binds only from under `/srv/evals/run`, internal networks. The proxy also has a
-firewall check, `GET /_evalskills/firewall`. Example config: `deploy/gvisor/docker-proxy.example.json`.
+objects only, no builds or pulls, binds only from under `/srv/evals/run`, internal networks with no address on the
+host, and the gateway and egress proxy attached to each. The proxy also has an isolation check,
+`GET /_evalskills/isolation`. Example config: `deploy/gvisor/host/docker-proxy.json`.
 
 Builds: Compose never builds. When a task has a Dockerfile, `GvisorEnvironment` sends its build context to the
 proxy's `POST /_evalskills/build` and gets back a tag, which becomes the trial's prebuilt image. The proxy builds only
 allowlisted Dockerfiles (`deploy/gvisor/build/README.md`). A refused one fails the trial with "unsupported
 environment", and the runner records it as unsupported, never as a score.
 
-Not here yet:
-- The runner's per-trial folders, the eval user, the disk cap, and the proxy's and the firewall's boot units
-  (#137, PR C).
-
-`pipeline/tier3.py` refuses to start a live run until those are in.
+The host side (the eval user, the capped trial disk, one `/etc/hosts` line, a read-only host check and the proxy's
+unit) is in `deploy/gvisor/host/`, one script per step (`deploy/gvisor/README.md`). `pipeline/tier3.py` refuses to
+start a live run until the proxy reports trial isolation in place.
 
 Accepted risk with binds (#137, host operator's condition 5):
 - The skill can write into its own trial's log folders on the host, including symlinks.

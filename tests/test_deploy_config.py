@@ -13,17 +13,16 @@ def test_zone_a_config_names_no_model_credential(name):
     assert not re.search(r"API_KEY|SKILL_EVAL_LLM_|TOKEN\s*=", text)
 
 
-def test_app_network_is_outside_the_eval_firewall_scope():
-    # #99: firewall.sh sends everything from 172.31.240.0/20 to EVALS-EGRESS (model gateway only) and drops it at
-    # INPUT. The app's own bridge must not fall inside that range, or its clones and the host's proxy break.
+def test_app_network_is_outside_the_trial_and_egress_ranges():
+    # #99, #137: the app's own bridge must not fall inside the trial pool or the services' egress network, or the
+    # step 4 check refuses the host and the socket proxy could hand a trial the app's range.
     import ipaddress
 
-    scope = re.search(r"-s (\d+\.\d+\.\d+\.\d+/\d+) -j EVALS-EGRESS", (DEPLOY / "gvisor" / "firewall.sh").read_text())
-    assert scope, "firewall.sh no longer names its scope in the expected form"
-    scope = ipaddress.ip_network(scope.group(1))
+    common = (DEPLOY / "gvisor" / "host" / "common.sh").read_text()
+    ranges = [ipaddress.ip_network(re.search(rf"^{k}=([\d./]+)", common, re.M).group(1)) for k in ("POOL", "EGRESS")]
     compose = (DEPLOY / "compose.yaml").read_text()
     subnet = ipaddress.ip_network(re.search(r"EVALSKILLS_SUBNET:-([\d./]+)", compose).group(1))
     gateway = ipaddress.ip_address(re.search(r"gateway: \"\$\{EVALSKILLS_GATEWAY:-([\d.]+)\}", compose).group(1))
-    assert not subnet.overlaps(scope)
+    assert not any(subnet.overlaps(r) for r in ranges)
     assert gateway in subnet
     assert f"EVALSKILLS_GATEWAY:-{gateway}}}/32" in compose  # TRUSTED_PROXIES follows the gateway

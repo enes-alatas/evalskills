@@ -19,7 +19,8 @@ things:
   doesn't, or none can be found, the trial is torn down and the start fails. This *detects* a non-runsc container
   after the fact; it doesn't prevent one. Prevention is the check before start, plus the socket proxy (#137).
 Kata's other limits carry over: no egress-control sidecar, so non-public network policies are refused. Egress is the
-host firewall's job (deploy/gvisor/firewall.sh).
+trial network's job: the socket proxy makes it internal with no host address, and attaches only the gateway and the
+egress proxy to it (gateway/docker_proxy.py).
 
 Harbor labels this environment type "kata"; SkillEvaluator's reports carry the env mode "gvisor".
 """

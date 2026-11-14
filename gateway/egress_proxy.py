@@ -1,7 +1,7 @@
 """evalskills egress proxy: trials reach package hosts through this, and nothing else (#123, item 6).
 
 Harbor installs the agent inside every trial at setup (system packages, Node through nvm, `npm i -g opencode-ai`),
-so trials need a few download hosts. The firewall lets them reach only the gateway and this proxy. The proxy allows
+so trials need a few download hosts. Their networks let them reach only the gateway and this proxy. The proxy allows
 HTTPS tunnels (CONNECT, port 443) and plain HTTP GET/HEAD (port 80, for package mirrors) to allowlisted hostnames
 only, and only when every address a name resolves to is public, so an allowlisted name can never point a trial at
 the host or the LAN. It holds no secret. It logs hostnames, decisions and byte counts, never paths or bodies.

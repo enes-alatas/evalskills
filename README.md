@@ -30,7 +30,7 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
   holds the QuixBugs pilot (`shared-tasks/quixbugs-python/`).
 * `web/` holds the single-page app (no build step).
 * `deploy/` holds the static-only stack: the app (`Dockerfile`), the scanner sidecar (`scanner/`, #65) and
-  `compose.yaml`. It also holds the gVisor eval-daemon drafts (`deploy/gvisor/`, unreviewed and untested).
+  `compose.yaml`. It also holds the gVisor host steps for live trials (`deploy/gvisor/`, untested on the host).
   `scripts/deploy-smoke.sh` builds both images and runs one real scan through them. CI runs it on PRs that touch
   them.
 

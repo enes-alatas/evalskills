@@ -1,0 +1,14 @@
+# The trial folders' own capped filesystem (#137, step 2): /var/lib/evals/run.img, 5 GB, preallocated ext4.
+# A trial that fills it fills only this, never /. nodev,nosuid: a skill writes here through its binds.
+[Unit]
+Description=evalskills trial folders (capped)
+After=local-fs.target
+
+[Mount]
+What=/var/lib/evals/run.img
+Where=/srv/evals/run
+Type=ext4
+Options=loop,nodev,nosuid
+
+[Install]
+WantedBy=multi-user.target

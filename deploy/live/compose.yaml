@@ -1,13 +1,15 @@
-# Live pilot services (#121), on the MAIN Docker daemon: the model gateway and the trial egress proxy. Trials on the
-# gVisor eval daemon (deploy/gvisor/) reach these two ports on br-evals (172.31.248.1) and nothing else.
-# Both use the host network so they can listen on br-evals itself: trial traffic to them is INPUT on the host, which
-# firewall.sh's EVALS-INPUT chain allows for these two ports only. Start docker-evals first: it creates br-evals.
-# Usage (as root, after deploy/gvisor/ step 0): see deploy/live/README.md.
+# Live pilot services (#121), on the MAIN Docker daemon: the model gateway and the trial egress proxy. Both sit on
+# their own egress network at fixed addresses, with nothing published. The socket proxy (#137) attaches them to each
+# trial's internal network, which has no address on the host, so a trial reaches these two containers and nothing
+# else; their way out is this egress network. The host reaches the gateway at 172.31.248.2 directly (step 3).
+# Usage (as root): deploy/gvisor/host/9-live.sh, after steps 1-8; see deploy/live/README.md.
 x-hardening: &hardening
   build: { context: ../.., dockerfile: deploy/live/Dockerfile }
   image: evalskills-live:local
-  restart: unless-stopped                    # also retries until br-evals exists
-  network_mode: host
+  restart: unless-stopped
+  # Both sit on the egress network and on every trial network: they must never route between them. A container's
+  # namespace copies ip_forward from the host, where Docker turns it on (trial-network showed 1).
+  sysctls: { net.ipv4.ip_forward: "0" }
   read_only: true
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -20,7 +22,8 @@ x-hardening: &hardening
 services:
   gateway:
     <<: *hardening
-    container_name: evalskills-gateway
+    container_name: evalskills-gateway       # the socket proxy attaches it by this name (docker-proxy.json services)
+    networks: { egress: { ipv4_address: 172.31.248.2 } }   # step 3 names this address evals-gateway on the host
     user: "10002:10002"
     command: ["python3", "-I", "/opt/gateway/gateway.py", "serve", "--config", "/etc/evalskills/gateway.json"]
     volumes:
@@ -31,10 +34,17 @@ services:
   egress-proxy:
     <<: *hardening
     container_name: evalskills-egress-proxy
+    networks: { egress: { ipv4_address: 172.31.248.3 } }
     user: "10003:10003"
     command: ["python3", "-I", "/opt/gateway/egress_proxy.py", "--config", "/etc/evalskills/egress-proxy.json"]
     volumes:
       - ./egress-proxy.json:/etc/evalskills/egress-proxy.json:ro
+
+networks:
+  egress:
+    name: evalskills-egress
+    driver: bridge
+    ipam: { config: [{ subnet: 172.31.248.0/24, gateway: 172.31.248.1 }] }
 
 secrets:
   model_key:
