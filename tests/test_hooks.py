@@ -10,6 +10,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ("GITLEAKS", "ACTIONLINT", "SHELLCHECK")
+# What scripts/check.sh reads from its environment. CI sets these when it runs check.sh on a push to main, and the
+# tests here run check.sh again inside a temp repo, where that BASE commit doesn't exist.
+CHECK_INPUTS = ("CI", "BASE", "SUBJECTS", *TOOLS)
 
 
 def git(repo, *args, env=None, check=True):
@@ -19,8 +22,8 @@ def git(repo, *args, env=None, check=True):
 
 
 def clean_env(**extra):
-    """The caller's environment without CI (so a missing tool warns, as on a laptop) and without tool overrides."""
-    env = {k: v for k, v in os.environ.items() if k not in ("CI", *TOOLS) and not k.startswith("GIT_")}
+    """The caller's environment without check.sh's inputs (so a missing tool warns, as on a laptop) and git's."""
+    env = {k: v for k, v in os.environ.items() if k not in CHECK_INPUTS and not k.startswith("GIT_")}
     return {**env, **extra}
 
 
@@ -190,3 +193,9 @@ def test_ci_runs_check_sh_with_the_versions_it_pins():
     paths = (ROOT / ".github/security-review-paths").read_text().split()
     assert "scripts/check.sh" in paths and "scripts/hooks/*" in paths, "the gates CI runs need a security review"
     assert f"ruff@{pins['RUFF_VERSION']}" in (ROOT / "scripts/hooks/pre-commit").read_text()
+
+
+def test_the_hook_tests_ignore_the_check_inputs_ci_sets_on_a_push(monkeypatch):
+    for name, value in {"CI": "true", "BASE": "0" * 40, "SUBJECTS": "0"}.items():
+        monkeypatch.setenv(name, value)
+    assert not set(CHECK_INPUTS) & set(clean_env())
