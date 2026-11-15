@@ -30,7 +30,7 @@ def test_app_network_is_outside_the_trial_and_egress_ranges():
 
 
 # Base images pinned by digest, each watched by Dependabot (#178). deploy/live joins with #183.
-PINNED_DOCKERFILES = ["deploy/Dockerfile"]
+PINNED_DOCKERFILES = ["deploy/Dockerfile", "deploy/live/Dockerfile"]
 
 
 @pytest.mark.parametrize("path", PINNED_DOCKERFILES)
@@ -39,3 +39,12 @@ def test_base_images_are_pinned_by_digest_and_watched(path):
     assert froms and all(re.fullmatch(r"FROM \S+@sha256:[0-9a-f]{64}( AS \S+)?", f) for f in froms), froms
     dependabot = (ROOT / ".github/dependabot.yml").read_text()
     assert re.search(r'directories: \[[^\]]*"/' + re.escape(str(Path(path).parent)) + r'"', dependabot)
+
+
+def test_dependabot_never_proposes_a_new_python_minor_or_major():
+    dependabot = (ROOT / ".github/dependabot.yml").read_text()
+    docker = dependabot[dependabot.index("package-ecosystem: docker") :]
+    rule = re.search(r"- dependency-name: python\n\s+update-types: \[([^\]]*)\]", docker)
+    assert rule and {"version-update:semver-major", "version-update:semver-minor"} <= set(
+        re.findall(r'"([^"]+)"', rule[1])
+    )
