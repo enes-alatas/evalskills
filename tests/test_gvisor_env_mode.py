@@ -108,6 +108,39 @@ def test_preflight_refuses_without_runsc(monkeypatch):
         g.GvisorEnvironment.preflight()
 
 
+def stub_docker(tmp_path, monkeypatch, exit_code=0, stderr=""):
+    """A fake `docker` first on PATH. It logs the DOCKER_HOST and DOCKER_CONTEXT it was called with, and answers
+    `info` with runc and runsc registered."""
+    bin_dir, log = tmp_path / "bin", tmp_path / "docker.log"
+    bin_dir.mkdir()
+    script = bin_dir / "docker"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "host=${{DOCKER_HOST:-}} context=${{DOCKER_CONTEXT:-}} args=$*" >> {log}\n'
+        f'[ {exit_code} = 0 ] || {{ echo "{stderr}" >&2; exit {exit_code}; }}\n'
+        'case "$*" in *Runtimes*) echo \'{"runc": {}, "runsc": {}}\' ;; esac\n'
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+def test_preflight_asks_the_proxy_even_before_any_environment_exists(tmp_path, monkeypatch):
+    monkeypatch.delenv("DOCKER_HOST")  # as Harbor's process starts: SkillEvaluator forwards no DOCKER_* variable
+    log = stub_docker(tmp_path, monkeypatch)
+    g.GvisorEnvironment.preflight()  # Harbor calls it on the class, before any instance (#185)
+    calls = log.read_text().splitlines()
+    assert any("Runtimes" in c for c in calls) and any(c.endswith("args=info") for c in calls), calls
+    assert all(c.startswith(f"host=unix://{g.DEFAULT_SOCKET} context= ") for c in calls), calls
+
+
+def test_a_failed_docker_info_names_its_error_not_a_missing_runsc(tmp_path, monkeypatch):
+    stub_docker(tmp_path, monkeypatch, exit_code=1, stderr="permission denied while trying to connect")
+    with pytest.raises(SystemExit, match="exited 1: permission denied") as e:
+        g.GvisorEnvironment.preflight()
+    assert "not registered" not in str(e.value)
+
+
 def started(monkeypatch, tmp_path, runtimes, e=None):
     """Start with Harbor's own start stubbed; returns (raised error or None, whether the trial was torn down)."""
     e = e or env(tmp_path)
