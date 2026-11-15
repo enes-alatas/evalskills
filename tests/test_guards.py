@@ -119,3 +119,9 @@ def test_gh_body_guard(command, blocked):
     payload = json.dumps({"tool_input": {"command": command}})
     result = subprocess.run([sys.executable, "-I", str(GUARD)], input=payload, capture_output=True, text=True)
     assert (result.returncode == 2) == blocked, result.stderr
+
+
+@pytest.mark.parametrize("path", ["secrets/model_key", "deploy/live/secrets/model_key", "cache/x", "sources/x"])
+def test_key_and_clone_folders_are_never_committed(path):
+    ignored = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT, timeout=30, check=False)
+    assert ignored.returncode == 0, f"{path} must be gitignored"
