@@ -94,12 +94,16 @@ case "$n" in
         esac ;;
     esac ;;
   pgrep) exit 1 ;;
+  git) case "$*" in *"rev-parse HEAD"*) echo "${STUB_GIT_HEAD:-}" ;; esac ;;
+  uv) echo "uv env UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR UV_CACHE_DIR=$UV_CACHE_DIR" >> "$STUB_LOG"
+    [ "$1" = sync ] && mkdir -p .venv "$UV_PYTHON_INSTALL_DIR" ;;
+  runuser) exit "${STUB_RUNUSER_EXIT:-0}" ;;
 esac
 exit 0
 """
 STUBBED = (
     "id getent groupadd useradd userdel groupdel install fallocate mkfs.ext4 mountpoint mount umount systemctl "
-    "networkctl ip iptables iptables-save docker chown pgrep git uv sleep df"
+    "networkctl ip iptables iptables-save docker chown pgrep git uv sleep df runuser"
 ).split()
 
 
@@ -398,3 +402,51 @@ def test_run_disk_accepts_a_fully_allocated_image(host):
     run_image(host)
     p, _ = host["run"]("2-run-disk.sh", "--yes")
     assert "not reformatting" in p.stdout
+
+
+SE_PIN = "d136a597c54784ad8a0ce28542c208602b397a5c"
+
+
+def code_host(host, with_uv=True):
+    host["run"]("1-user.sh", "--yes")
+    for d in ("opt/evalskills/.git", "opt/skillevaluator/.git"):
+        (host["prefix"] / d).mkdir(parents=True)  # the clones (git is a stub)
+    if with_uv:
+        uv = host["prefix"] / "opt/uv/bin/uv"
+        uv.parent.mkdir(parents=True)
+        uv.write_text(STUB)
+        uv.chmod(0o755)
+
+
+def test_code_step_refuses_without_uv_in_opt_before_cloning(host):
+    code_host(host, with_uv=False)  # uv on PATH (a stub) is not enough: root's PATH isn't what runs on the host
+    p, calls = host["run"]("5-code.sh", "--yes", "c" * 40, check=False, STUB_GIT_HEAD=SE_PIN)
+    assert p.returncode == 1 and "no uv at /opt/uv/bin/uv" in p.stderr
+    assert not [c for c in calls if c.startswith(("git ", "uv "))]  # nothing cloned or synced (#180)
+
+
+def test_code_step_keeps_python_and_the_cache_under_opt_and_checks_the_trial_user(host):
+    code_host(host)
+    p, calls = host["run"]("5-code.sh", "--yes", "c" * 40, STUB_GIT_HEAD=SE_PIN)
+    opt = host["prefix"] / "opt/uv"
+    uv_calls = [c for c in calls if c.startswith("uv env ")]
+    assert len(uv_calls) == 2 and all(
+        c == f"uv env UV_PYTHON_INSTALL_DIR={opt}/python UV_CACHE_DIR={opt}/cache" for c in uv_calls
+    )
+    assert f"chown -R root:root {opt}/python" in calls  # never /root, which evals can't read (#180)
+    venv_python = f"{host['prefix']}/opt/skillevaluator/.venv/bin/python"
+    assert f"runuser -u evals -- {venv_python} -I -c import skillevaluator, evalskills_gvisor" in calls
+    assert "done: evalskills" in p.stdout
+
+
+def test_code_step_fails_when_the_trial_user_cannot_run_the_venv(host):
+    code_host(host)
+    p, _ = host["run"]("5-code.sh", "--yes", "c" * 40, check=False, STUB_GIT_HEAD=SE_PIN, STUB_RUNUSER_EXIT="126")
+    assert p.returncode == 1 and "evals can't run /opt/skillevaluator/.venv/bin/python" in p.stderr
+
+
+def test_code_undo_removes_the_python_and_cache_it_made_but_not_uv(host):
+    for d in ("opt/evalskills", "opt/skillevaluator", "opt/uv/python", "opt/uv/cache", "opt/uv/bin"):
+        (host["prefix"] / d).mkdir(parents=True)
+    host["run"]("5-code-undo.sh", "--yes")
+    assert sorted(p.name for p in (host["prefix"] / "opt").rglob("*")) == ["bin", "uv"]
