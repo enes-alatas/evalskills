@@ -30,6 +30,15 @@ plan() {
 say() { echo "$STEP: $*"; }
 die() { echo "$STEP: $*" >&2; exit 1; }
 
+# allocated FILE: stop unless every byte of FILE is backed by blocks on its filesystem. The run image's cap is only
+# real if / holds all of it; a sparse image can fill / while trials still see free space (#179).
+allocated() {
+  # shellcheck disable=SC2046 # three numbers, split on purpose
+  set -- "$1" $(stat -c '%b %B %s' "$1")
+  [ $(($2 * $3)) -ge "$4" ] ||
+    die "$1 is sparse: $(($2 * $3)) of $4 bytes allocated. Reserve the rest with: fallocate -l $4 $1"
+}
+
 YES=0
 for a in "$@"; do
   case "$a" in

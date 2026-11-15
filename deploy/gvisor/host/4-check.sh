@@ -8,6 +8,7 @@ set -eu
 plan "  1. docker version: the engine must be 28 or later
   2. docker info: runsc must be a registered runtime
   3. docker network ls/inspect: no other network may use $POOL (trial networks) or $EGRESS (the services)
+  4. /var/lib/evals/run.img must still be fully allocated: a later fstrim through the loop mount can thin it (#179)
 Changes nothing."
 v=$(docker version --format '{{.Server.Version}}')
 [ "${v%%.*}" -ge 28 ] 2>/dev/null || die "Docker Engine $v: 28 or later is needed"
@@ -30,4 +31,7 @@ for line in sys.stdin:
             print(f"{name} {net}")
 ' "$POOL" "$EGRESS")
 [ -z "$taken" ] || die "a network already uses our ranges: $taken"
-say "ok: Docker $v, runsc registered, $POOL and $EGRESS free"
+IMG="$P/var/lib/evals/run.img"
+[ -f "$IMG" ] || die "no run image $IMG: run 2-run-disk.sh first"
+allocated "$IMG"
+say "ok: Docker $v, runsc registered, $POOL and $EGRESS free, run image fully allocated"

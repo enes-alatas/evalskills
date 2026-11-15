@@ -191,7 +191,8 @@ def test_user_undo_removes_only_its_user_and_group(host):
 def test_run_disk_is_preallocated_once_and_mounted_nodev_nosuid(host):
     host["run"]("1-user.sh", "--yes")
     _, calls = host["run"]("2-run-disk.sh", "--yes")
-    assert any(c.startswith("fallocate -l 5G ") for c in calls) and any(c.startswith("mkfs.ext4") for c in calls)
+    assert any(c.startswith("fallocate -l 5G ") for c in calls)
+    assert [c for c in calls if c.startswith("mkfs.ext4")][0].count(" -E nodiscard ") == 1  # no holes punched (#179)
     _, calls = host["run"]("2-run-disk.sh", "--yes")
     assert not [c for c in calls if c.startswith(("fallocate", "mkfs.ext4"))]  # never reformats
     unit = (host["prefix"] / "etc/systemd/system/srv-evals-run.mount").read_text()
@@ -227,7 +228,19 @@ def nets(host, **found):
         (d / name).write_text(line + "\n")
 
 
+def run_image(host, sparse=False) -> Path:
+    img = host["prefix"] / "var/lib/evals/run.img"
+    img.parent.mkdir(parents=True, exist_ok=True)
+    if sparse:
+        with img.open("wb") as f:
+            f.truncate(1 << 20)  # 1 MiB apparent, no blocks: what mkfs.ext4's discard left on the host (#179)
+    else:
+        subprocess.run(["fallocate", "-l", "1M", str(img)], check=True)
+    return img
+
+
 def test_check_step_passes_on_a_ready_host_and_changes_nothing(host):
+    run_image(host)
     nets(host, bridge="bridge||172.17.0.0/16 ", app="evalskills_default||172.30.250.0/24 ")
     nets(host, mine="trial-1|1|172.31.240.0/28 ", egress="evalskills-egress||172.31.248.0/24 ")
     p, calls = host["run"]("4-check.sh", "--yes")
@@ -244,9 +257,13 @@ def test_check_step_passes_on_a_ready_host_and_changes_nothing(host):
         ({"net": "other||172.31.240.64/26 "}, "already uses our ranges: other 172.31.240.64/26"),
         ({"net": "other||172.31.0.0/16 "}, "already uses our ranges"),
         ({"net": "other||10.0.0.0/24 172.31.248.128/25 "}, "already uses our ranges: other 172.31.248.128/25"),
+        ({"image": None}, "no run image"),
+        ({"image": "sparse"}, "run.img is sparse: 0 of 1048576 bytes allocated"),  # thinned by fstrim, say
     ],
 )
 def test_check_step_refuses_a_host_that_is_not_ready(host, setup, why):
+    if setup.get("image", "full"):
+        run_image(host, sparse=setup.get("image") == "sparse")
     env = {k: v for k, v in setup.items() if k.startswith("STUB_")}
     if setup.get("no_runsc"):
         (host["state"] / "no_runsc").touch()
@@ -366,3 +383,18 @@ def test_live_step_starts_the_gateway_and_proxy(host):
     live_ready(host, "web 0.0.0.0:8080->443/tcp, 127.0.0.1:18443->8443/tcp\n")
     _, calls = host["run"]("9-live.sh", "--yes")
     assert [c for c in calls if c.startswith("docker compose")]
+
+
+def test_run_disk_refuses_a_sparse_image(host):
+    host["run"]("1-user.sh", "--yes")
+    run_image(host, sparse=True)
+    p, _ = host["run"]("2-run-disk.sh", "--yes", check=False)
+    assert p.returncode != 0 and "is sparse" in p.stderr and "fallocate -l 1048576 " in p.stderr
+    assert not (host["state"] / "mounted").exists()  # refused before it is mounted
+
+
+def test_run_disk_accepts_a_fully_allocated_image(host):
+    host["run"]("1-user.sh", "--yes")
+    run_image(host)
+    p, _ = host["run"]("2-run-disk.sh", "--yes")
+    assert "not reformatting" in p.stdout
