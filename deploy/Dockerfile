@@ -1,7 +1,8 @@
 # evalskills: the app server (zone A). It runs no evaluator: static scans go to the scanner sidecar (#65,
 # deploy/scanner/). git clones skills; curl serves the healthcheck.
 # Build:  docker build -f deploy/Dockerfile -t evalskills .
-FROM python:3.13-slim
+# By digest, so a rebuild can't change the base image without a commit; Dependabot proposes the bumps (#178).
+FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90
 
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \

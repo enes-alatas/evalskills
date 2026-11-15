@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
+ROOT = Path(__file__).resolve().parents[1]
+DEPLOY = ROOT / "deploy"
 
 
 @pytest.mark.parametrize("name", ["env.example", "compose.yaml"])
@@ -26,3 +27,15 @@ def test_app_network_is_outside_the_trial_and_egress_ranges():
     assert not any(subnet.overlaps(r) for r in ranges)
     assert gateway in subnet
     assert f"EVALSKILLS_GATEWAY:-{gateway}}}/32" in compose  # TRUSTED_PROXIES follows the gateway
+
+
+# Base images pinned by digest, each watched by Dependabot (#178). deploy/live joins with #183.
+PINNED_DOCKERFILES = ["deploy/Dockerfile"]
+
+
+@pytest.mark.parametrize("path", PINNED_DOCKERFILES)
+def test_base_images_are_pinned_by_digest_and_watched(path):
+    froms = [line for line in (ROOT / path).read_text().splitlines() if line.startswith("FROM ")]
+    assert froms and all(re.fullmatch(r"FROM \S+@sha256:[0-9a-f]{64}( AS \S+)?", f) for f in froms), froms
+    dependabot = (ROOT / ".github/dependabot.yml").read_text()
+    assert re.search(r'directories: \[[^\]]*"/' + re.escape(str(Path(path).parent)) + r'"', dependabot)

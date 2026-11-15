@@ -1,4 +1,5 @@
-# Keeps the commit-SHA pins in .github/workflows current, so actions' own security fixes reach us.
+# Keeps the commit-SHA pins in .github/workflows and the digest-pinned Dockerfile base images current, so upstream
+# security fixes reach us as reviewed PRs.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -10,3 +11,14 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: ci
+  # The app's image. Not the trial base (deploy/gvisor/build/base): its digest moves by its own procedure, since the
+  # host pins the built image (deploy/gvisor/build/README.md). Not the scanner: it takes its image as a build arg.
+  - package-ecosystem: docker
+    directories: ["/deploy"]
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        patterns: ["*"]
+    commit-message:
+      prefix: build
