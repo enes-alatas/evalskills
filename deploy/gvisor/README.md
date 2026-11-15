@@ -33,13 +33,33 @@ and its `-undo.sh` removes only what that step added. Step 4 only reads, so it h
 | 2 | `2-run-disk.sh` | A 5 GB preallocated (`fallocate`, then `mkfs.ext4 -E nodiscard` so no holes are punched back) ext4 image `/var/lib/evals/run.img` (root 0600), mounted `loop,nodev,nosuid` at `/srv/evals/run` by `srv-evals-run.mount` (enabled); the mounted root `evals:evals` 0700. Never reformats an existing image, and refuses one that isn't fully allocated (#179) | `2-run-disk-undo.sh`: disables the mount, removes the unit and the image (every trial folder with it); refuses while the proxy runs |
 | 3 | `3-hosts.sh` | Adds one `/etc/hosts` line, `172.31.248.2 evals-gateway # evalskills #137`, for the host-side judge | `3-hosts-undo.sh`: removes exactly that line |
 | 4 | `4-check.sh` | Read-only: Docker Engine 28 or later, `runsc` registered, and no other Docker network on 172.31.240.0/21 or 172.31.248.0/24, and the run image still fully allocated (an `fstrim` through the loop mount can thin it, #179). Changes nothing | none needed |
-| 5 | `5-code.sh COMMIT [REPO]` | This repository at `COMMIT` (refused unless on `origin/main`) at `/opt/evalskills`; SkillEvaluator at the pinned `d136a597` at `/opt/skillevaluator`, `uv sync --frozen --extra tier3`, and `gvisor_env` installed into its `.venv` non-editable. Both root-owned, read-only to others. **Downloads packages**: announce it as a network step. The repository is private, so `REPO` is usually a local path | `5-code-undo.sh`: removes both folders; refuses while the proxy runs |
+| 5 | `5-code.sh COMMIT [REPO]` | This repository at `COMMIT` (refused unless on `origin/main`) at `/opt/evalskills`; SkillEvaluator at the pinned `d136a597` at `/opt/skillevaluator`, `uv sync --frozen --extra tier3` with `/opt/uv/bin/uv` (Python in `/opt/uv/python`, the cache in `/opt/uv/cache`, never under `/root`), and `gvisor_env` installed into its `.venv` non-editable. All root-owned, read-only to others, and it checks that `evals` can run the venv's Python. Needs uv: see below. **Downloads packages**: announce it as a network step. The repository is private, so `REPO` is usually a local path | `5-code-undo.sh`: removes both folders and `/opt/uv/python`, `/opt/uv/cache`; keeps uv; refuses while the proxy runs |
 | 6 | `6-base-image.sh DIR` | Checks the CI artifact in `DIR` (first check the run on GitHub, as `build/README.md` says): `"loadable": true`, `"pinned": "committed"`, the tarball's sha256. Then `docker load`, and prints this host's image ID | `6-base-image-undo.sh`: `docker image rm` (no `-f`) |
 | 7 | `7-docker-proxy.sh` | `/etc/evals/docker-proxy.json` (root 0640) from `host/docker-proxy.json`, with `builds.base_image_id` set to this host's ID of the base image; `evalskills-docker-proxy.service`. **Not enabled, not started** | `7-docker-proxy-undo.sh`: stops it, removes the unit and the config |
 | 8 | `8-docker-client.sh` | `/var/lib/evals/.docker/config.json` (root 0644): `proxies` to `evals-proxy:3128`, so Docker sets `HTTP(S)_PROXY` in every trial container | `8-docker-client-undo.sh`: deletes it |
 | 9 | `9-live.sh` | The gateway and the egress proxy (`deploy/live/compose.yaml`) on `evalskills-egress`. The model key goes in first, by hand (`deploy/live/README.md`, step 1); the script never reads it | `9-live-undo.sh`: `docker compose down` (volumes kept); refuses while the proxy runs |
 
 A rerun of step 6 then step 7 re-pins a reloaded base image.
+
+### uv on the host, before step 5
+
+Step 5 runs uv from `/opt/uv/bin`, not from root's `PATH`. It refuses to start, before cloning anything, until uv is
+there (#180). Install it once, as root, in an announced network window, from uv's standalone GitHub release, checked
+against the SHA-256 committed here (not the release's own `.sha256`, which would change with the asset). To move to
+a new version, take the hash from the release's asset digest and its `.sha256`, check that they agree, and commit it:
+
+```sh
+v=0.13.8 t=uv-x86_64-unknown-linux-gnu.tar.gz d=$(mktemp -d)
+curl -fsSL -o "$d/$t" "https://github.com/astral-sh/uv/releases/download/$v/$t"
+echo "5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91  $d/$t" | sha256sum -c - &&
+  tar -xzf "$d/$t" -C "$d"
+install -d -m 0755 /opt/uv /opt/uv/bin
+install -m 0755 "$d/uv-x86_64-unknown-linux-gnu/uv" "$d/uv-x86_64-unknown-linux-gnu/uvx" /opt/uv/bin/
+/opt/uv/bin/uv --version
+```
+
+Undo: `rm -rf /opt/uv`, only after `5-code-undo.sh`, since the venv's Python lives in `/opt/uv/python`. The host's
+`python3 -m venv` is no alternative: the host has no `python3-venv`.
 
 ## Checks after the steps, before any trial
 
