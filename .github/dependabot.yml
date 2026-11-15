@@ -11,8 +11,9 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: ci
-  # The app's image. Not the trial base (deploy/gvisor/build/base): its digest moves by its own procedure, since the
-  # host pins the built image (deploy/gvisor/build/README.md). Not the scanner: it takes its image as a build arg.
+  # The app's image and the live services' (gateway, egress proxy). Not the trial base (deploy/gvisor/build/base): its
+  # digest moves by its own procedure, since the host pins the built image (deploy/gvisor/build/README.md). Not the
+  # scanner: it takes its image as a build arg.
   - package-ecosystem: docker
     directories: ["/deploy", "/deploy/live"]
     schedule:
