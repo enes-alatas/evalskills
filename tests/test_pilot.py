@@ -167,6 +167,8 @@ def test_a_refused_trial_dockerfile_is_unsupported_not_failed():
 TRIAL = r"""
 r=$1; skill=$2; seen=$3
 echo "$r $TMPDIR $skill $EVALSKILLS_UNSUPPORTED_FILE" > "$seen/paths"
+echo "$XDG_CONFIG_HOME $XDG_DATA_HOME $XDG_STATE_HOME" > "$seen/xdg"
+mkdir -p "$XDG_STATE_HOME/skillevaluator" && echo key > "$XDG_STATE_HOME/skillevaluator/output-provenance.key"
 mkdir -p "$r/_harbor-jobs/t"
 echo real > "$r/_harbor-jobs/t/real.txt"
 ln -s /etc/passwd "$r/_harbor-jobs/planted"
@@ -221,6 +223,9 @@ def test_a_trial_runs_in_a_fresh_folder_and_root_copies_only_plain_files_out(tri
     work = results.parent
     assert work.parent == trial["run_root"] and tmp.parent == work and skill.is_relative_to(work)
     assert mark.parent.parent == work and mark.parent not in (results, tmp)  # no container is bound there
+    xdg = [Path(x) for x in (trial["seen"] / "xdg").read_text().split()]
+    assert [x.name for x in xdg] == ["config", "data", "state"]  # #186: the trial's own, not the shared home's
+    assert all(x.parent.parent == work and x.parent not in (results, tmp) for x in xdg)  # no container is bound there
     assert list(trial["run_root"].iterdir()) == []  # nothing of the trial stays where the next trial's binds come from
     assert gone(int((trial["seen"] / "grandchild").read_text()))  # its session was killed with it
     assert removed == [1]  # containers and networks are always cleaned up
@@ -374,6 +379,17 @@ def test_skillevaluator_runs_from_its_venv_not_through_uv(tmp_path):
     cmd = tier3.command(tmp_path, tmp_path / "out", "a/b", "c" * 40)
     assert cmd[0] == str(ev.EVALUATOR_DIR / ".venv" / "bin" / "skillevaluator")
     assert cmd[cmd.index("--env-mode") + 1] == "gvisor"
+
+
+def test_as_root_a_trial_keeps_the_root_owned_home_and_its_own_xdg_folders(tmp_path, monkeypatch):
+    monkeypatch.setattr(tier3.os, "geteuid", lambda: 0)
+    me = pwd.getpwuid(os.getuid())
+    shared = {"PATH": "/usr/bin", "HOME": "/root", "XDG_CACHE_HOME": "/root/.cache", "XDG_STATE_HOME": "/root/.local"}
+    env = tier3._trial_env_for(shared, me, tmp_path / "tmp", tmp_path / "xdg")
+    assert env["HOME"] == me.pw_dir and env["TMPDIR"] == str(tmp_path / "tmp")  # ~/.docker/config.json stays root's
+    assert "XDG_CACHE_HOME" not in env
+    for name, sub in tier3.XDG_DIRS.items():
+        assert env[name] == str(tmp_path / "xdg" / sub)  # never the runner's, never the shared home's ~/.local
 
 
 @pytest.mark.parametrize("outcome, can", [(3, False), (0, True), (1, True), (-9, True), ("timeout", True)])

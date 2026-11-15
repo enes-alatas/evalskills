@@ -1,7 +1,8 @@
 #!/bin/sh
 # Step 1 (#137): the proxy socket's group `evalskills`, and the trial user `evals` (uid 10010), in that group and in
 # no other: never `docker`. Its home /var/lib/evals belongs to root, so the trial user can't swap what root keeps
-# there (the run disk's image, its Docker client config). Only ~/.cache is its own.
+# there (the run disk's image, its Docker client config). Only ~/.cache is its own: Harbor writes ~/.cache by path,
+# whatever XDG_CACHE_HOME says. Each trial gets its own XDG config, data and state folders in its trial folder (#186).
 set -eu
 . "$(dirname "$0")/common.sh"
 HOME_DIR="$P/var/lib/evals"
