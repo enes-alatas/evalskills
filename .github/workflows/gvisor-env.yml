@@ -1,0 +1,75 @@
+# tests/test_gvisor_env_mode.py against the pinned SkillEvaluator and its Harbor (#189). Everywhere else that file is
+# skipped, because it needs both installed. #185 (every live trial failed in preflight) slipped through that gap.
+# No secrets, a read-only token, no Docker: the tests stub it. uv is the standalone release, checked against the
+# SHA-256 committed here, as in deploy/gvisor/README.md.
+name: gvisor-env
+
+on:
+  pull_request:
+    paths:
+      - "gvisor_env/**"
+      - "pipeline/tier3.py"
+      - "tests/test_gvisor_env_mode.py"
+      - "tests/conftest.py" # loaded with the test file
+      - ".github/workflows/gvisor-env.yml"
+  push:
+    branches: [main]
+    paths:
+      - "gvisor_env/**"
+      - "pipeline/tier3.py"
+      - "tests/test_gvisor_env_mode.py"
+      - "tests/conftest.py" # loaded with the test file
+      - ".github/workflows/gvisor-env.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gvisor-env-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SKILLEVALUATOR_PIN: d136a597c54784ad8a0ce28542c208602b397a5c # 0.8.0, as pinned everywhere else
+  UV_VERSION: 0.13.8
+  UV_SHA256: 5acfd9177cfecf0bf87578f059728215ccc884388988f55f7a65041b57387d91
+
+jobs:
+  env-mode:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: NVIDIA/SkillEvaluator
+          ref: ${{ env.SKILLEVALUATOR_PIN }}
+          path: skillevaluator
+          persist-credentials: false
+      - name: install uv, checksum-verified
+        run: |
+          t=uv-x86_64-unknown-linux-gnu.tar.gz
+          curl -sSfL -o "/tmp/$t" "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/$t"
+          echo "${UV_SHA256}  /tmp/$t" | sha256sum -c -
+          tar -xzf "/tmp/$t" -C /tmp
+          install -m 0755 /tmp/uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv
+      - name: SkillEvaluator's locked environment, with gvisor_env
+        working-directory: skillevaluator
+        run: |
+          test "$(git rev-parse HEAD)" = "$SKILLEVALUATOR_PIN"
+          uv sync -q --frozen --python 3.13 --extra tier3
+          uv pip install -q --python .venv/bin/python --no-deps "$GITHUB_WORKSPACE/gvisor_env"
+          uv pip install -q --python .venv/bin/python pytest==9.2.0
+          # the test file skips itself without these, so a missing one must fail here, not pass as "skipped"
+          .venv/bin/python -I -c 'import skillevaluator, harbor, evalskills_gvisor'
+      - name: the env-mode tests, none skipped
+        working-directory: skillevaluator
+        run: |
+          .venv/bin/python -m pytest -q -rs --junitxml="$RUNNER_TEMP/junit.xml" "$GITHUB_WORKSPACE/tests/test_gvisor_env_mode.py"
+          python3 -I -c '
+          import sys, xml.etree.ElementTree as ET
+          s = next(ET.parse(sys.argv[1]).getroot().iter("testsuite"))
+          print("tests=%s skipped=%s" % (s.get("tests"), s.get("skipped")))
+          sys.exit(int(s.get("skipped")) > 0 or int(s.get("tests")) == 0)
+          ' "$RUNNER_TEMP/junit.xml"
