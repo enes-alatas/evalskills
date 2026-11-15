@@ -6,6 +6,8 @@ shots/
 logs_*.txt
 __pycache__/
 sources/
+# A key file must never be one `git add .` away; the live key lives in /etc/evalskills/secrets/ (#182).
+secrets/
 *.pid
 
 # gvisor_env build output (uv run --with ./gvisor_env)
