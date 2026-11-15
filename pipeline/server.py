@@ -362,6 +362,10 @@ def worker():
                     note = rec.get("error")
                 with db() as c:
                     add_record(c, rec, s["category"])
+            except ev.LowDisk as e:
+                # Nothing ran: no result, no score. The job says why, and a later resubmission runs normally (#168).
+                note = f"Not evaluated: the server is low on disk space ({e}). Please try again later."
+                print(f"evaluation refused, low disk: {e}", file=sys.stderr)
             except ev.ScannerUnavailable:
                 # Not a result: the job stays queued and says why, and is offered again after a pause (#65, #103).
                 with db() as c:

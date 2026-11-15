@@ -40,8 +40,59 @@ SCANNER_PICKUP_TIMEOUT = float(os.environ.get("SCANNER_PICKUP_TIMEOUT", "120"))
 SCANNER_POLL_S = float(os.environ.get("SCANNER_POLL_S", "1"))
 
 
+# Stored evaluation data stays bounded whatever visitors submit (#168).
+REPORTS_KEPT_PER_SKILL = int(os.environ.get("REPORTS_KEPT_PER_SKILL", "3"))
+if REPORTS_KEPT_PER_SKILL < 1:  # 0 would read as "keep none", and the newest record's report must stay
+    raise ValueError("REPORTS_KEPT_PER_SKILL must be 1 or more")
+MIN_FREE_DATA_BYTES = int(os.environ.get("MIN_FREE_DATA_BYTES", str(5 * 1024**3)))
+
+
 class ScannerUnavailable(RuntimeError):
     """No scanner claimed the job in time. The worker puts the job back in the queue; it is never a failed score."""
+
+
+class LowDisk(RuntimeError):
+    """Too little free space to clone and scan. Nothing ran, so there is no result and no score (#168)."""
+
+
+def check_free_data(path: Path | None = None) -> None:
+    """Refuse an evaluation while the volume holding the reports has less than MIN_FREE_DATA_BYTES free."""
+    path = path or REPORTS
+    while not path.exists():
+        path = path.parent
+    free = shutil.disk_usage(path).free
+    if free < MIN_FREE_DATA_BYTES:
+        raise LowDisk(f"{free // 1024**2} MB free, below the {MIN_FREE_DATA_BYTES // 1024**2} MB minimum")
+
+
+def prune_reports(repo: str, skill_path: str, slug: str, results: list[dict] | None = None) -> list[str]:
+    """Remove the report folders of this skill's older evaluations (#168). Kept: the newest REPORTS_KEPT_PER_SKILL
+    evaluations (the site shows the newest), and the newest completed one of each mode: that is the result reusable()
+    hands back when unchanged content is resubmitted, and the last good report behind a run of failures. Result
+    records stay; a removed folder's report links are simply no longer offered. Returns the folders removed."""
+    mine = [
+        r
+        for r in (load_results() if results is None else results)
+        if (r.get("source") or {}).get("repo") == repo
+        and (r.get("source") or {}).get("skill_path") == skill_path
+        and r.get("report_dir")
+    ]
+    mine.sort(key=lambda r: r.get("started_at") or "")
+    keep = {r["report_dir"] for r in mine[-REPORTS_KEPT_PER_SKILL:]}
+    newest = {}
+    for r in mine:
+        if r.get("status") == "completed":
+            newest[r.get("mode")] = r["report_dir"]
+    keep |= set(newest.values())
+    removed = []
+    base = REPORTS / slug
+    # Only folders an older record names: a folder with no record yet may be a scan still running.
+    for rel in sorted({r["report_dir"] for r in mine} - keep):
+        d = ROOT / rel
+        if d.parent == base and d.is_dir() and not d.is_symlink() and not base.is_symlink():
+            shutil.rmtree(d)
+            removed.append(rel)
+    return removed
 
 
 # Only these variables reach the evaluator subprocess; nothing else from our env leaks.
@@ -482,6 +533,7 @@ def run_tier1_sidecar(skill_dir: Path, out: Path, on_start=None) -> tuple[int, f
 def evaluate(
     repo: str, skill_path: str, category: str = "", llm: bool = False, force: bool = False, on_start=None
 ) -> dict:
+    check_free_data()  # before the clone, the snapshot and the scan: each of them writes to disk
     snap_root = Path(tempfile.mkdtemp(prefix="skill-snap-"))
     try:
         with GIT_LOCK:
@@ -587,6 +639,10 @@ def _evaluate(repo, skill_path, category, llm, force, skill_dir, commit, on_star
     RESULTS.parent.mkdir(parents=True, exist_ok=True)
     with RESULTS.open("a") as f:
         f.write(json.dumps(rec) + "\n")
+    try:
+        prune_reports(repo, skill_path, slug)
+    except Exception as e:  # noqa: BLE001 - pruning never changes an outcome or stops the queue
+        print(f"prune_reports {slug}: {type(e).__name__}: {e}", file=sys.stderr)
     return rec
 
 
