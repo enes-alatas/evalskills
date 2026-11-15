@@ -8,6 +8,7 @@ and the path to the full underlying reports.
 """
 
 import datetime as dt
+import errno
 import functools
 import hashlib
 import json
@@ -193,13 +194,34 @@ def _local_evaluator_version() -> dict:
     return {"version": ver, "commit": commit}
 
 
+HEAD_BYTES = 20_000  # enough for any SKILL.md frontmatter we show
+
+
+def read_head(path: Path, limit: int = HEAD_BYTES) -> str:
+    """At most `limit` bytes of a file in a cloned repository, decoded with replacement (#170). The file is never read
+    whole, so a huge SKILL.md can't exhaust memory. A link or anything but a regular file (a FIFO would block, a
+    device never ends) reads as "": its frontmatter is simply absent."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as e:
+        if e.errno == errno.ELOOP:  # the last part of the path is a link
+            return ""
+        raise
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        os.close(fd)
+        return ""
+    with os.fdopen(fd, "rb") as f:
+        return f.read(limit).decode(errors="replace")
+
+
 def tree_digest(skill_dir: Path) -> str:
-    """Content hash of the skill folder, so unchanged skills are not re-run."""
+    """Content hash of the skill folder, so unchanged skills are not re-run. Each file is hashed in chunks (#170)."""
     h = hashlib.sha256()
     for p in sorted(skill_dir.rglob("*")):
         if p.is_file() and not p.is_symlink() and ".git" not in p.parts:
             h.update(str(p.relative_to(skill_dir)).encode())
-            h.update(hashlib.sha256(p.read_bytes()).digest())
+            with p.open("rb") as f:
+                h.update(hashlib.file_digest(f, "sha256").digest())
     return "sha256:" + h.hexdigest()
 
 
