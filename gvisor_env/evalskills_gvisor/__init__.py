@@ -63,6 +63,14 @@ def proxy_socket() -> str:
     return path
 
 
+def use_proxy() -> None:
+    """Point every Docker client in this process at the socket proxy: the trusted client, Compose, and Harbor's own
+    class-level checks. Harbor runs preflight() as a class method before any environment exists (#185), so this is
+    called there as well as in __init__."""
+    os.environ["DOCKER_HOST"] = "unix://" + proxy_socket()
+    os.environ.pop("DOCKER_CONTEXT", None)
+
+
 class _Unix(http.client.HTTPConnection):
     def __init__(self, path: str, timeout: float):
         super().__init__("localhost", timeout=timeout)
@@ -99,9 +107,7 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         kwargs["kata_runtime"] = RUNTIME
         kwargs["kata_dns"] = NO_DNS
-        # before anything talks to Docker: the trusted client and Compose read DOCKER_HOST from this process
-        os.environ["DOCKER_HOST"] = "unix://" + proxy_socket()
-        os.environ.pop("DOCKER_CONTEXT", None)
+        use_proxy()  # before anything talks to Docker
         super().__init__(*args, **kwargs)
 
     @classmethod
@@ -114,13 +120,23 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
 
     @classmethod
     def _docker_runtimes(cls) -> list[str]:
+        """The runtimes the daemon behind the proxy has registered. A failed `docker info` raises with its error, so
+        a refused socket or a timeout never reads as "runsc not registered"."""
+        env = {k: v for k, v in os.environ.items() if k != "DOCKER_CONTEXT"}
+        env["DOCKER_HOST"] = "unix://" + proxy_socket()
         try:
             p = subprocess.run(
-                cls._engine_cmd("info", "--format", "{{json .Runtimes}}"), capture_output=True, timeout=10
+                cls._engine_cmd("info", "--format", "{{json .Runtimes}}"), capture_output=True, timeout=10, env=env
             )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            raise SystemExit(f"gvisor env mode: `docker info` through the socket proxy failed: {e}") from e
+        if p.returncode != 0:
+            err = p.stderr.decode(errors="replace").strip()[-500:]
+            raise SystemExit(f"gvisor env mode: `docker info` through the socket proxy exited {p.returncode}: {err}")
+        try:
             runtimes = json.loads(p.stdout or b"{}")
-        except (subprocess.TimeoutExpired, OSError, ValueError):
-            return []
+        except ValueError as e:
+            raise SystemExit("gvisor env mode: `docker info` through the socket proxy printed no runtimes") from e
         return sorted(runtimes) if isinstance(runtimes, dict) else []
 
     @classmethod
@@ -129,6 +145,7 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
 
     @classmethod
     def preflight(cls) -> None:
+        use_proxy()  # Harbor's Docker check, in super().preflight(), runs `docker info` with this process's env
         if RUNTIME not in cls._docker_runtimes():
             raise SystemExit(
                 "runsc is not registered with Docker. Install gVisor and run `runsc install -- --platform=systrap`, "
