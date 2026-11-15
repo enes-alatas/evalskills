@@ -4,7 +4,10 @@ Live Tier 3 trials run on the host's **main** Docker daemon, every container und
 platform, so no /dev/kvm is needed). The runner never gets Docker's socket: SkillEvaluator runs as the trial user
 `evals`, whose only Docker access is the socket proxy (`gateway/docker_proxy.py`). The design and the host
 operator's conditions are in #137 and ADR-0003 (amendments of 2026-11-12, 2026-11-13 and 2026-11-14). Trials are
-isolated by Docker alone: there is no host firewall for them, and no step changes iptables.
+isolated by Docker alone: there is no host firewall for them, and no step writes an iptables rule itself. Docker
+adds its own per-bridge rules for the networks it makes: for `evalskills-egress` (step 9), and for each trial network
+while it exists. On the host, step 9 added seven lines, each naming the new bridge or 172.31.248.0/24 (#181). A
+before/after `iptables-save` diff should show only such additions, and no changed or removed rule.
 
 Already done on the host (2026-11-12, announced): runsc installed and registered as an extra runtime
 (`runsc install -- --platform=systrap`, `systemctl reload docker`). The default runtime stays runc.
@@ -24,6 +27,16 @@ Already done on the host (2026-11-12, announced): runsc installed and registered
 ## Host steps
 
 The host's operator runs each step, as root, in a window announced on #137 first (CONVENTIONS, shared hosts).
+Before step 2, check free space on `/` (`df -h /`). What you need is the steps' total, plus the runner's floor, plus
+room for trial images (#181):
+- **The steps:** about 9 to 10 GB. That is the 5 GB run image (step 2), about 3 GB for the loaded base image (step 6),
+  and about 0.5 GB for the code, uv and its Python (step 5). Add uv's package cache in `/opt/uv/cache` (step 5), and
+  the base image's artifact tarball while it loads (step 6) unless its `DIR` is on another disk.
+- **The floor:** 8 GB (`TIER3_MIN_FREE_ROOT`). The runner refuses a trial with less free on `/`.
+- **Headroom:** each trial's image grows `/var/lib/docker` on `/` until it is removed.
+
+So start with at least 20 GB free. Recompute when one of these parts changes.
+
 Each script is in `host/`, prints what it will do, and changes nothing without `--yes`. Each is safe to run twice,
 and its `-undo.sh` removes only what that step added. Step 4 only reads, so it has no undo. Run them from a checkout of this repository, in this order:
 
@@ -69,7 +82,19 @@ None of these spends API budget.
 - `trial_env()` (`pipeline/tier3.py`) passes, as root, with the gateway URL and a token file set.
 - As `evals`, `/var/run/docker.sock` is refused (`sudo -u evals docker -H unix:///var/run/docker.sock ps` fails with
   permission denied), and the proxy socket answers.
-- Through the proxy: a runsc `hello-world` from the base image runs, and a create without runsc is refused.
+- Through the proxy, one trial runs under runsc, reaches the two services, and nothing else. The proxy refuses any
+  image without the trial label (`403 Config.Image is not an image built for a trial`), so build a probe image first.
+  It is the base image plus that label only, with no `RUN` step, so nothing runs at build. Then run `host/probe.py`
+  as `evals`. It checks that a create asking for runc is refused, and that the trial reaches `evals-gateway:8443` and
+  `evals-proxy:3128`. It also checks that the trial does not reach 172.31.248.2:8443, the host at 172.31.248.1 or
+  172.17.0.1, or the internet. It removes its container and network whatever the result:
+
+  ```sh
+  printf 'FROM evalskills/trial-base:d136a597\nLABEL io.evalskills.owned=1\n' |
+    docker build -q -t evalskills/probe:host -                      # as root, on the daemon
+  sudo -u evals python3 -I /opt/evalskills/deploy/gvisor/host/probe.py evalskills/probe:host
+  docker image rm evalskills/probe:host                             # as root, afterwards
+  ```
 - `df -h /srv/evals/run` shows the 5 GB disk, and `/` has more than `TIER3_MIN_FREE_ROOT` (8 GB) free: the runner
   refuses a trial below that, because trial images grow `/var/lib/docker` on `/`.
 
