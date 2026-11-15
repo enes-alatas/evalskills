@@ -148,7 +148,7 @@ def read_desc(rec):
     try:
         repo_dir = ev.CACHE / rec["source"]["repo"].replace("/", "__")
         p = repo_dir / rec["source"]["skill_path"] / "SKILL.md"
-        fm = disc.frontmatter(p.read_text(errors="replace")[:20000])
+        fm = disc.frontmatter(ev.read_head(p))
         return fm.get("name"), (fm.get("description") or "")[:400]
     except OSError:
         return None, ""
@@ -573,7 +573,7 @@ class H(BaseHTTPRequestHandler):
                         continue
                     sd = (repo_dir / path).resolve()
                     if not c.execute("SELECT 1 FROM skills WHERE id=?", (sid,)).fetchone():
-                        fm = disc.frontmatter((sd / "SKILL.md").read_text(errors="replace")[:20000])
+                        fm = disc.frontmatter(ev.read_head(sd / "SKILL.md"))
                         c.execute(
                             "INSERT INTO skills VALUES(?,?,?,?,?,?,?,?)",
                             (

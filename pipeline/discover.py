@@ -5,7 +5,7 @@ import re
 import subprocess
 import urllib.request
 
-from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env  # noqa: F401
+from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env, read_head  # noqa: F401
 
 MAX_SKILLS_LISTED = 1000  # names and paths only; NVIDIA/skills had 450 on 2026-11-10 (#87)
 
@@ -94,7 +94,7 @@ def discover(url: str) -> dict:
         total += 1
         if len(skills) >= MAX_SKILLS_LISTED:
             continue  # keep counting, so the form can say how many were left out
-        fm = frontmatter(p.read_text(errors="replace")[:20000])
+        fm = frontmatter(read_head(p))
         skills.append(
             {"path": rel, "name": fm.get("name") or p.parent.name, "description": (fm.get("description") or "")[:300]}
         )
