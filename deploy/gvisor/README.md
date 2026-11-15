@@ -29,7 +29,7 @@ and its `-undo.sh` removes only what that step added. Step 4 only reads, so it h
 
 | # | Script | What it does | Undo |
 | --- | --- | --- | --- |
-| 1 | `1-user.sh` | Group `evalskills`; system user `evals` (uid 10010, `nologin`, in `evalskills` only). `/var/lib/evals` root 0755, `~/.cache` the user's own | `1-user-undo.sh`: only that uid, only an empty group; refuses while the run disk exists or the user has processes |
+| 1 | `1-user.sh` | Group `evalskills`; system user `evals` (uid 10010, `nologin`, in `evalskills` only). `/var/lib/evals` root 0755, `~/.cache` the user's own (Harbor writes it by path); XDG config, data and state are per trial, in its trial folder (#186) | `1-user-undo.sh`: only that uid, only an empty group; refuses while the run disk exists or the user has processes |
 | 2 | `2-run-disk.sh` | A 5 GB preallocated (`fallocate`) ext4 image `/var/lib/evals/run.img` (root 0600), mounted `loop,nodev,nosuid` at `/srv/evals/run` by `srv-evals-run.mount` (enabled); the mounted root `evals:evals` 0700. Never reformats an existing image | `2-run-disk-undo.sh`: disables the mount, removes the unit and the image (every trial folder with it); refuses while the proxy runs |
 | 3 | `3-hosts.sh` | Adds one `/etc/hosts` line, `172.31.248.2 evals-gateway # evalskills #137`, for the host-side judge | `3-hosts-undo.sh`: removes exactly that line |
 | 4 | `4-check.sh` | Read-only: Docker Engine 28 or later, `runsc` registered, and no other Docker network on 172.31.240.0/21 or 172.31.248.0/24. Changes nothing | none needed |

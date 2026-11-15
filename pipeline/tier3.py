@@ -168,10 +168,16 @@ def _hand_over(work: Path, user: pwd.struct_passwd) -> None:
         os.lchown(p, user.pw_uid, user.pw_gid)
 
 
-def _trial_env_for(env: dict, user: pwd.struct_passwd, scratch: Path) -> dict:
-    """TMPDIR inside the trial folder; HOME (its ~/.docker/config.json holds the egress proxy) the trial user's."""
+XDG_DIRS = {"XDG_CONFIG_HOME": "config", "XDG_DATA_HOME": "data", "XDG_STATE_HOME": "state"}
+
+
+def _trial_env_for(env: dict, user: pwd.struct_passwd, scratch: Path, xdg: Path) -> dict:
+    """TMPDIR and the XDG config, data and state folders inside the trial folder, so nothing a trial writes there
+    outlives it (#186: SkillEvaluator keeps a key in XDG_STATE_HOME, Harbor its telemetry id in XDG_CONFIG_HOME).
+    HOME stays the trial user's root-owned home: its ~/.docker/config.json holds the egress proxy."""
     out = {k: v for k, v in env.items() if k != "XDG_CACHE_HOME"} if os.geteuid() == 0 else dict(env)
     out["TMPDIR"] = str(scratch)
+    out.update({k: str(xdg / d) for k, d in XDG_DIRS.items()})
     if os.geteuid() == 0:
         out["HOME"] = user.pw_dir
     return out
@@ -478,12 +484,12 @@ def run(
             / f"{repo.replace('/', '__')}__{skill_path.replace('/', '__')}"
             / f"{commit[:12]}-tier3-{task_set or 'own'}-{time.strftime('%Y%m%dT%H%M%S')}"
         )
-        results, scratch, marks = work / "results", work / "tmp", work / "marks"
-        for d in (results, scratch, marks):
-            d.mkdir()
+        results, scratch, marks, xdg = work / "results", work / "tmp", work / "marks", work / "xdg"
+        for d in (results, scratch, marks, *(xdg / n for n in XDG_DIRS.values())):
+            d.mkdir(parents=True)
         _hand_over(work, user)
         cmd = command(skill, results, repo, commit)
-        trial_env_ = {**_trial_env_for(env, user, scratch), UNSUPPORTED_FILE_ENV: str(marks / "unsupported")}
+        trial_env_ = {**_trial_env_for(env, user, scratch, xdg), UNSUPPORTED_FILE_ENV: str(marks / "unsupported")}
         started = time.monotonic()
         with tempfile.TemporaryFile() as log_f:  # root's, outside the trial folder
             p = subprocess.Popen(
