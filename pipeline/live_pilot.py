@@ -5,10 +5,11 @@ gateway's counts for that run (requests, tokens) go into its record. Records go 
 which is never committed and never reaches the public build (ADR-0007: the board shows no pilot result; E12 in
 docs/EXPERIMENT_LOG.md publishes per-skill results).
 
-Run on the VPS, as root, after deploy/gvisor/ and deploy/live/ are set up. SkillEvaluator itself runs as the trial
-user (tier3.TRIAL_USER), through the socket proxy:
-  DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 \\
-  TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \\
+Run on the VPS, as root from /opt/evalskills, after deploy/gvisor/ and deploy/live/ are set up. SkillEvaluator itself
+runs as the trial user (tier3.TRIAL_USER), through the socket proxy:
+  SKILLEVALUATOR_DIR=/opt/skillevaluator DOCKER_HOST=unix:///run/evalskills/docker.sock \\
+  TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b \\
+  SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \\
   python3 -I pipeline/live_pilot.py [--only SLUG] [--dry-run]
 """
 
@@ -152,7 +153,9 @@ def status_of(
     return "completed", None
 
 
-def record(row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: dict | None, started: str) -> dict:
+def record(
+    row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: dict | None, started: str, evaluator: dict
+) -> dict:
     status, reason = status_of(res["exit"], lift, res.get("unsupported", False), res.get("stopped"))
     agent = next(iter(lift.values()), {})
     return {
@@ -170,7 +173,7 @@ def record(row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: d
         "cases": res["cases"],
         "task_set": row["task_set"],
         "repeat": repeat,
-        "evaluator": ev._local_evaluator_version(),
+        "evaluator": evaluator,  # read before the trials (#200)
         "agent": tier3.AGENT,
         "model": tier3.AGENT_MODEL or None,
         "judge_model": os.environ.get("SKILL_EVAL_LLM_MODEL") or None,
@@ -186,7 +189,7 @@ def record(row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: d
     }
 
 
-def crashed(row: dict, repeat: int, run_id: str, why: str, counts: dict | None, started: str) -> dict:
+def crashed(row: dict, repeat: int, run_id: str, why: str, counts: dict | None, started: str, evaluator: dict) -> dict:
     """A run that never reached SkillEvaluator's results: failed, with the reason and no scores."""
     return {
         "id": run_id,
@@ -196,6 +199,7 @@ def crashed(row: dict, repeat: int, run_id: str, why: str, counts: dict | None, 
         "category": row["category"],
         "task_set": row["task_set"],
         "repeat": repeat,
+        "evaluator": evaluator,
         "agent": tier3.AGENT,
         "model": tier3.AGENT_MODEL or None,
         "started_at": started,
@@ -216,6 +220,15 @@ def main(argv: list[str]) -> int:
             print(f"{slug(r)} #{i} cases={r['task_set'] or 'own'}")
         print(f"{len(plan)} runs")
         return 0
+    try:  # before any token or trial: a missing evaluator must not cost a run, or lose its record afterwards (#200)
+        evaluator = tier3.evaluator_version()
+    except (OSError, subprocess.SubprocessError, RuntimeError) as e:
+        print(
+            f"pilot stopped: no SkillEvaluator at {ev.EVALUATOR_DIR} ({type(e).__name__}). "
+            "Set SKILLEVALUATOR_DIR=/opt/skillevaluator: deploy/live/README.md.",
+            file=sys.stderr,
+        )
+        return 2
     RECORDS.parent.mkdir(parents=True, exist_ok=True)
     for row, i in plan:
         now = dt.datetime.now(dt.UTC)
@@ -240,9 +253,9 @@ def main(argv: list[str]) -> int:
             finally:
                 revoked = revoke(run_id)
         if res is None:
-            rec = crashed(row, i, run_id, crash, usage(run_id), started)
+            rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator)
         else:
-            rec = record(row, i, run_id, res, read_lift(res["out"]), usage(run_id), started)
+            rec = record(row, i, run_id, res, read_lift(res["out"]), usage(run_id), started, evaluator)
         rec["token_revoked"] = revoked
         with RECORDS.open("a") as f:
             f.write(json.dumps(rec) + "\n")

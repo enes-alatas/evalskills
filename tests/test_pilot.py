@@ -90,15 +90,15 @@ def test_status_never_invents_a_score(tmp_path, exit_code, data, status):
     assert (reason is None) == (status == "completed")
 
 
-def test_a_failed_run_records_no_scores(tmp_path, monkeypatch):
-    monkeypatch.setattr(ev, "_local_evaluator_version", lambda: {"version": "x", "commit": "y"})
+def test_a_failed_run_records_no_scores(tmp_path):
     out = ev.ROOT / "reports" / "pilot-test-out"
     res = {"exit": 1, "cases": "starter", "out": out, "commit": "c" * 40, "tree_digest": "sha256:0", "duration_s": 1.0}
     row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
-    rec = pilot.record(row, 1, "pilot-r", res, {}, None, "2026-11-12T00:00:00+00:00")
+    rec = pilot.record(row, 1, "pilot-r", res, {}, None, "2026-11-12T00:00:00+00:00", {"version": "x", "commit": "y"})
     assert rec["status"] == "failed" and rec["scores"] is None
     assert rec["mode"] == "tier3" and rec["pilot"] is True and ev.is_pilot(rec)
     assert rec["cost_usd"] is None  # unbilled trial key: not a zero
+    assert rec["evaluator"] == {"version": "x", "commit": "y"}  # as read before the trials (#200)
 
 
 # --- cases labels ---
@@ -123,8 +123,12 @@ def test_agent_model_is_passed_to_opencode(monkeypatch, tmp_path):
 
 def test_a_crashed_run_is_recorded_failed_without_scores():
     row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
-    rec = pilot.crashed(row, 1, "pilot-r", "CalledProcessError: clone failed", None, "2026-11-12T00:00:00+00:00")
+    evaluator = {"version": "x", "commit": "y"}
+    rec = pilot.crashed(
+        row, 1, "pilot-r", "CalledProcessError: clone failed", None, "2026-11-12T00:00:00+00:00", evaluator
+    )
     assert (rec["status"], rec["scores"], rec["mode"]) == ("failed", None, "tier3")
+    assert rec["evaluator"] == evaluator  # provenance as complete as a finished run's
     assert rec["reason"].startswith("CalledProcessError")
 
 
@@ -146,10 +150,55 @@ def test_no_gateway_stops_the_pilot_plainly(tmp_path, monkeypatch, capsys):
     def down(*a, **k):
         raise subprocess.CalledProcessError(1, "docker")
 
+    monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
     monkeypatch.setattr(pilot, "issue_token", down)
     assert pilot.main([]) == 2
-    assert "pilot stopped" in capsys.readouterr().err
+    assert "could not issue a gateway token" in capsys.readouterr().err
     assert not (tmp_path / "results.jsonl").exists()
+
+
+def test_no_evaluator_stops_the_pilot_before_any_token_or_trial(tmp_path, monkeypatch, capsys):
+    """#200: the host run looked for SkillEvaluator at the workstation default and failed. It must stop up front."""
+    row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
+    monkeypatch.setattr(pilot, "load_skills", lambda: [row])
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(ev, "EVALUATOR_DIR", tmp_path / "missing")
+    issued = []
+    monkeypatch.setattr(pilot, "issue_token", lambda *a, **k: issued.append(a))
+    assert pilot.main([]) == 2
+    err = capsys.readouterr().err
+    assert "no SkillEvaluator at" in err and "SKILLEVALUATOR_DIR" in err
+    assert issued == [] and not (tmp_path / "results.jsonl").exists()
+
+
+def test_the_evaluator_version_comes_from_its_venv_and_checkout_not_uv(tmp_path, monkeypatch):
+    d = tmp_path / "se"
+    (d / ".venv" / "bin").mkdir(parents=True)
+    exe = d / ".venv" / "bin" / "skillevaluator"
+    exe.write_text("#!/bin/sh\necho 'skillevaluator 0.8.0'\n")
+    exe.chmod(0o755)
+    subprocess.run(["git", "init", "-q", str(d)], check=True, timeout=30)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(d),
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "x",
+        ],
+        check=True,
+        timeout=30,
+    )
+    head = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")  # no uv to fall back on
+    assert tier3.evaluator_version(d) == {"version": "0.8.0", "commit": head}
 
 
 def test_a_failed_revoke_is_warned_about(monkeypatch, capsys):
