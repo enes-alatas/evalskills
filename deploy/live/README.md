@@ -58,13 +58,15 @@ record. Records go to `reports/pilot/results.jsonl`, which is never committed: t
 
 Prerequisites on the host: `deploy/gvisor/host/` steps 1-9. That gives this repository at `/opt/evalskills`,
 SkillEvaluator at the pinned version with its `tier3` extra at `/opt/skillevaluator` (`SKILLEVALUATOR_DIR`), and the
-trial user's Docker client `proxies` config. Start the socket proxy for the pilot and stop it afterwards:
-`systemctl start evalskills-docker-proxy`.
+trial user's Docker client `proxies` config. Run it as root from `/opt/evalskills`. Start the socket proxy for the
+pilot and stop it afterwards: `systemctl start evalskills-docker-proxy`. `SKILLEVALUATOR_DIR` must be set: the runner
+reads the evaluator's version from `/opt/skillevaluator/.venv` before the first run, and stops if it isn't there.
 
 ```
 python3 -I pipeline/live_pilot.py --dry-run          # the 16 planned runs; nothing starts
-DOCKER_HOST=unix:///run/evalskills/docker.sock TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 \
-TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \
+SKILLEVALUATOR_DIR=/opt/skillevaluator DOCKER_HOST=unix:///run/evalskills/docker.sock \
+TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 TIER3_AGENT_MODEL=nvidia/nemotron-3-super-120b-a12b \
+SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b \
 python3 -I pipeline/live_pilot.py --only obra__superpowers__skills__systematic-debugging   # one skill first
 ```
 

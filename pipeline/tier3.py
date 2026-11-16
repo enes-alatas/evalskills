@@ -297,6 +297,27 @@ def prepare(skill_dir: Path, task_set: str | None, dest: Path) -> Path:
     return dest
 
 
+def evaluator_version(evaluator_dir: Path | None = None) -> dict:
+    """The version and commit of the SkillEvaluator the trials run, from its synced venv and its checkout. Not
+    `uv run` (evaluate._local_evaluator_version): that would sync the venv without the tier3 extra, and the host
+    has no uv on root's PATH (#200). Raises if the evaluator isn't there, so a caller can stop before any trial."""
+    d = evaluator_dir or ev.EVALUATOR_DIR
+    out = subprocess.run(
+        [str(d / ".venv" / "bin" / "skillevaluator"), "--version"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+        stdin=subprocess.DEVNULL,
+    ).stdout.split()
+    commit = subprocess.run(
+        ["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True, check=True, timeout=60
+    ).stdout.strip()
+    if not out or not commit:
+        raise RuntimeError(f"no SkillEvaluator version or commit at {d}")
+    return {"version": out[-1], "commit": commit}
+
+
 def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
     """SkillEvaluator from its synced venv, with evalskills_gvisor installed there once (deploy/gvisor/README.md).
     Not `uv run`: that would sync, so the trial user would write to the evaluator's environment."""
