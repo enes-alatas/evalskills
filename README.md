@@ -52,7 +52,7 @@ python3 -I pipeline/server.py --port 8080
 ```
 
 Useful environment variables are `MAX_QUEUE`, `MAX_SKILLS_PER_SUBMISSION`, `SUBMISSIONS_PER_HOUR`,
-`DISCOVERIES_PER_HOUR`, `TIER1_TIMEOUT`, and the storage bounds `REPORTS_KEPT_PER_SKILL` (default 3: older evaluations' report folders are removed, never the one the site shows) and `MIN_FREE_DATA_BYTES` (default 5 GiB: below it a job ends "Not evaluated", with no result). `MAX_SKILLS_PER_SUBMISSION` (default 10) counts only skills that need a
+`DISCOVERIES_PER_HOUR`, `TIER1_TIMEOUT`, and the storage bounds `REPORTS_KEPT_PER_SKILL` (default 3: older evaluations' report folders are removed, never the one the site shows) and `MIN_FREE_DATA_BYTES` (default 5 GiB: below it a job ends "Not evaluated", with no result). The connection bounds are `REQUEST_TIMEOUT_S` (default 30: a connection that sends nothing for that long is closed), `REQUEST_DEADLINE_S` (default 60: a request, headers and body, not fully in by then is cut off, however it trickles) `MAX_CONNECTIONS` (default 64 served at once; one beyond it is closed on arrival) and `MAX_CONNECTIONS_PER_CLIENT` (default 4 requests with a body at once per client, told apart as for the rate limits; the next gets 429 before its body is read, and GETs never count). `MAX_SKILLS_PER_SUBMISSION` (default 10) counts only skills that need a
 run: a listed skill whose content and evaluator are unchanged is skipped and doesn't count. Put the server behind a TLS reverse proxy that sets
 `X-Forwarded-For` for per-client rate limits. The server believes that header only from `TRUSTED_PROXIES` (default:
 loopback only), and takes the entry `TRUSTED_PROXY_HOPS` (default 1) places from the right. `deploy/compose.yaml` sets
