@@ -84,9 +84,12 @@ performance shows as "not run" and is never estimated.
 
 `deploy/compose.yaml` runs two hardened containers. The app is published on `127.0.0.1:8088` only, behind the host's
 Caddy. The scanner is SkillEvaluator's Tier 1 image, pinned by digest, with no network, sharing only two exchange
-volumes with the app. Copy `deploy/env.example` to `deploy/.env` (no edits needed), run
-`docker compose -f deploy/compose.yaml up -d --build`, then add `skills.example.com { reverse_proxy 127.0.0.1:8088 }`
-to the Caddyfile and reload Caddy. Untrusted skill code never executes on the app host. The live
+volumes with the app. Copy `deploy/env.example` to `deploy/.env` (mode `0600`) and add
+`GITHUB_LOOKUP_TOKEN=` to it with the repository lookup's GitHub token: a fine-grained token with no repository
+access, so it reads only public data (#167, ADR-0008). It lifts GitHub's limit from 60 lookups an hour to the owning
+account's 5,000, of which the site spends at most `LOOKUPS_PER_HOUR`. Left empty, lookups go out unauthenticated;
+unset, compose refuses to start. Then run `docker compose -f deploy/compose.yaml up -d --build`, then add
+`skills.example.com { reverse_proxy 127.0.0.1:8088 }` to the Caddyfile and reload Caddy. Untrusted skill code never executes on the app host. The live
 sandbox runs separately, as described in `docs/ARCHITECTURE.md`. Hosting notes: `docs/HOSTING.md`.
 
 ## Contributing

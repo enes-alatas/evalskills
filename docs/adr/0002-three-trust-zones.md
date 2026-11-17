@@ -55,3 +55,21 @@ Enes approved this design on #65 on 2026-11-11.
   Tier 3 still runs only under gVisor (ADR-0003).
 - **When the scanner is down:** a job no scanner picks up goes back to the queue and stays `queued`. A scan that
   overruns its time cap is `failed` ("scan timed out").
+
+**Amendment (2026-11-17, #167): zone A holds one secret, a GitHub token with no access.** Enes chose this on
+2026-11-17, by direct message.
+- Each "Add skill" lookup asks GitHub's API for the repository's size and visibility before any clone. Without
+  authentication, GitHub allows 60 calls an hour per server address, so a few visitors could make Add skill fail for
+  everyone.
+- The lookup now authenticates with a fine-grained GitHub token that has no repository access and no permissions, so
+  it can read only what is public anyway. The limit becomes 5,000 an hour, and those are the quota of the GitHub
+  account that owns the token, shared with everything else that account does. The site spends at most
+  `LOOKUPS_PER_HOUR` (2,000) of them, and each repository's answer is cached for 5 minutes.
+- It is the one secret in zone A, and the table's "No secrets" for zone A now reads "this token only". It is
+  delivered as ADR-0008 says: the host sets `GITHUB_LOOKUP_TOKEN` for the app container alone. The app takes it out of
+  its own environment at start, so no child process inherits it. It is never logged, never in an answer, and never
+  passed to the scanner or a clone. `git clone` stays unauthenticated.
+- If it leaks, it grants public read access, and a stranger can spend the owning account's 5,000 requests an hour
+  until it is revoked. If that account is the one the team's `gh` uses, that throttles reviews and CI checks too.
+  Which account owns it is Enes's call, pending on #167; this line names it once he records it. Revoking it on GitHub fails lookups closed at once; emptying the variable and
+  recreating the container returns them to unauthenticated.

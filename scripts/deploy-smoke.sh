@@ -22,6 +22,8 @@ fail() {
 
 [ -e deploy/.env ] && fail "deploy/.env already exists; the smoke test starts from env.example"
 cp deploy/env.example deploy/.env
+# No lookup token in CI: set but empty, so lookups go out unauthenticated (#167). Never a real token here (ADR-0008).
+export GITHUB_LOOKUP_TOKEN=
 trap 'rm -f deploy/.env; [ "${SMOKE_DOWN:-0}" = 1 ] && "${COMPOSE[@]}" down -v >/dev/null 2>&1 || true' EXIT
 
 "${COMPOSE[@]}" up -d --build

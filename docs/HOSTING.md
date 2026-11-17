@@ -9,7 +9,9 @@ The design is in `docs/ARCHITECTURE.md` and its ADRs. This file lists what the h
   bridge address, which bypasses the `127.0.0.1` port binding. Check with
   `docker version --format '{{.Server.Version}}'`.
 - Egress: github.com, objects.githubusercontent.com, pypi.org, files.pythonhosted.org.
-- No provider credentials on the app container.
+- No provider credentials on the app container. Its one secret is the repository lookup's GitHub token, fine-grained
+  with no repository access, set on the host as `GITHUB_LOOKUP_TOKEN` (#167, ADR-0008). Its 5,000 requests an hour
+  are those of the account that owns it; the site spends at most `LOOKUPS_PER_HOUR` (2,000) of them.
 - Guards already in the app: a 300 MB repo cap, shallow clones with symlinks off, scans on a snapshot copy, a 900 s
   timeout, submission and lookup rate limits, and a queue cap.
 

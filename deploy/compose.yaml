@@ -23,6 +23,10 @@ services:
       # Caddy's requests reach the container from this network's gateway (Docker's port proxy / NAT), so that is the
       # one address whose X-Forwarded-For the app believes. Set here so it always matches the network below.
       TRUSTED_PROXIES: "${EVALSKILLS_GATEWAY:-172.30.250.1}/32"
+      # The repository lookup's GitHub token: fine-grained, no repository access, public data only (#167). Zone A's one
+      # secret, an env var the host must set (ADR-0008): compose refuses to start while it is unset. Empty means
+      # unauthenticated lookups, 60 an hour, as in development and CI. Never in this file or env.example.
+      GITHUB_LOOKUP_TOKEN: ${GITHUB_LOOKUP_TOKEN?set GITHUB_LOOKUP_TOKEN on the host (empty for unauthenticated lookups)}
     # --- isolation from the host and the other services ---
     user: "10001:10001"
     read_only: true

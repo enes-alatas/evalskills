@@ -19,3 +19,7 @@ be safe to publish.
 - Enes owns deployment and the secret files. Automating deploys later must not hand a secret to code from a public PR.
 - Before the repo goes public, run a full-history scan, and add a workflow that redacts credentials out of issue and
   comment bodies.
+
+**Amendment (2026-11-17, #167): secrets are delivered as host env vars now, not mounted files.** Enes decided this on
+2026-11-17 (recorded on #167). [ADR-0008](0008-secrets-are-host-env-vars.md) reverses the "mounted files" bullet
+above and says how the trade-offs it named are handled. Every other bullet here stands.

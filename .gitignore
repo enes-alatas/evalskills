@@ -8,6 +8,8 @@ __pycache__/
 sources/
 # A key file must never be one `git add .` away; the live key lives in /etc/evalskills/secrets/ (#182).
 secrets/
+# The host's deploy env file can hold GITHUB_LOOKUP_TOKEN (ADR-0008).
+deploy/.env
 *.pid
 
 # gvisor_env build output (uv run --with ./gvisor_env)
