@@ -19,7 +19,8 @@ EVC = "e" * 40
 
 def call(addr, method, path, body=None):
     c = http.client.HTTPConnection(*addr, timeout=5)
-    c.request(method, path, body=json.dumps(body) if body is not None else None)
+    headers = {"Content-Type": "application/json"} if body is not None else {}
+    c.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
     r = c.getresponse()
     data = json.loads(r.read() or b"{}")
     c.close()

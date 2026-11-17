@@ -141,7 +141,10 @@ def test_one_client_is_capped_while_another_is_still_served(serve):
     """#171 review: with only a global cap, one client re-dripping MAX_CONNECTIONS bodies keeps everyone out. Only
     requests with a body count, so a visitor's own page load (all GETs) is never refused."""
     addr = serve(limit=8, timeout=2, deadline=10, per_client=2)
-    head = b"POST /api/submit HTTP/1.0\r\nX-Forwarded-For: 192.0.2.1\r\nContent-Length: 100\r\n\r\n"
+    head = (
+        b"POST /api/submit HTTP/1.0\r\nX-Forwarded-For: 192.0.2.1\r\n"
+        b"Content-Type: application/json\r\nContent-Length: 100\r\n\r\n"
+    )
     holders = []
     try:
         for _ in range(2):  # client A holds its cap: headers in, body never finished

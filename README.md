@@ -66,8 +66,8 @@ visitor as the proxy and they all share one rate-limit bucket.
 | --- | --- | --- |
 | GET | `/api/skills` | Leaderboard rows (latest evaluation + job state) |
 | GET | `/api/skills/{repo}:{path}` | Detail: score breakdown, context, history |
-| POST | `/api/discover` `{url}` | List skills in a repo |
-| POST | `/api/submit` `{repo, paths[], category}` | Queue evaluations |
+| POST | `/api/discover` `{url}` | List skills in a repo (`Content-Type: application/json`, else 415) |
+| POST | `/api/submit` `{repo, paths[], category}` | Queue evaluations (`Content-Type: application/json`, else 415) |
 | GET | `/api/queue` | Active jobs |
 
 ## Current scope

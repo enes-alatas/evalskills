@@ -19,7 +19,9 @@ import server  # noqa: E402
 
 def call(addr, method, path, body=None, headers=None):
     c = http.client.HTTPConnection(*addr, timeout=5)
-    c.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers or {})
+    if headers is None:
+        headers = {"Content-Type": "application/json"} if body is not None else {}
+    c.request(method, path, body=json.dumps(body) if body is not None else None, headers=headers)
     r = c.getresponse()
     data = r.read()
     c.close()
@@ -219,3 +221,26 @@ def test_bootstrap_adds_new_catalog_records_and_keeps_submissions(tmp_path, monk
     )
     assert (tmp_path / "reports" / "kept" / "run" / "report.public.json").read_text() == '{"local": true}'
     assert (tmp_path / "reports" / "new" / "run" / "report.public.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "ctype",
+    [None, "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x", "application/jsonx"],
+)
+@pytest.mark.parametrize("path", ["/api/discover", "/api/submit"])
+def test_a_post_that_is_not_json_is_refused_before_anything_runs(app, root, monkeypatch, path, ctype):
+    """#172: a form or text/plain POST is what another site can make a visitor's browser send without a preflight."""
+    monkeypatch.setattr(server.disc, "discover", lambda url: pytest.fail("must not look anything up"))
+    code, data = call(
+        app, "POST", path, {"url": "https://github.com/a/b"}, headers={"Content-Type": ctype} if ctype else {}
+    )
+    assert code == 415 and b"application/json" in data
+    with server.db() as c:
+        assert c.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("ctype", ["application/json", "application/json; charset=utf-8", "Application/JSON"])
+def test_the_sites_own_json_posts_still_work(app, root, ctype):
+    body = {"repo": "example/repo", "paths": ["skills/demo"]}
+    code, data = call(app, "POST", "/api/submit", body, headers={"Content-Type": ctype})
+    assert code == 202 and json.loads(data)["submitted"][0]["skill_id"]
