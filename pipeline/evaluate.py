@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -163,34 +164,83 @@ def dir_kb(d: Path) -> int:
     return total // 1024
 
 
+CLONE_TIMEOUT_S = 300
+CLONE_POLL_S = 1.0  # how often a running clone or fetch is measured against MAX_REPO_KB
+
+
+class CloneTimeout(RuntimeError):
+    pass
+
+
+def _bounded_git(cmd: list[str], d: Path, env: dict) -> None:
+    """Run a git clone, fetch or reset that writes into d, killed as soon as d passes MAX_REPO_KB or CLONE_TIMEOUT_S
+    passes (#169). git runs in its own process group, so its helpers (git-remote-https, index-pack) die with it."""
+    deadline = time.monotonic() + CLONE_TIMEOUT_S
+    with tempfile.TemporaryFile() as err:
+        p = subprocess.Popen(
+            cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err, start_new_session=True
+        )
+        try:
+            while True:
+                try:
+                    code = p.wait(timeout=CLONE_POLL_S)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                if d.exists() and (kb := dir_kb(d)) > MAX_REPO_KB:
+                    raise RepoTooLarge(
+                        f"Repository too large (over {MAX_REPO_KB // 1024} MB, stopped at {kb // 1024} MB)"
+                    )
+                if time.monotonic() > deadline:
+                    raise CloneTimeout(f"the clone took longer than {CLONE_TIMEOUT_S} s and was stopped")
+        except BaseException:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
+            raise
+        if code:
+            err.seek(0)
+            tail = err.read()[-2000:].decode("utf-8", "replace")
+            print(f"command failed ({code}): {cmd[:4]} stderr: {tail}", file=sys.stderr)
+            raise subprocess.CalledProcessError(code, cmd, stderr=tail)
+
+
 def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
-    """Shallow-clone (or refresh) repo; return (dir, exact commit sha). A checkout over MAX_REPO_KB is deleted and
-    refused, whatever the GitHub API said about its size."""
+    """Shallow-clone (or refresh) repo; return (dir, exact commit sha). A clone, fetch or reset that fails, times out
+    or grows past MAX_REPO_KB is stopped, and its folder deleted, so the next lookup starts clean (#169). A checkout
+    over the cap is refused whatever the GitHub API said about its size."""
     if not REPO_RE.match(repo):
         raise ValueError(f"bad repo slug: {repo}")
     d = CACHE / repo.replace("/", "__")
     env = git_env()
-    if not d.exists():
-        d.parent.mkdir(parents=True, exist_ok=True)
-        sh(
-            [
-                "git",
-                "clone",
-                "-q",
-                "--depth",
-                "1",
-                "--no-tags",
-                "-c",
-                "core.symlinks=false",
-                f"https://github.com/{repo}.git",
-                str(d),
-            ],
-            env=env,
-            timeout=300,
-        )
-    else:
-        sh(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin", ref or "HEAD"], env=env, timeout=300)
-        sh(["git", "-C", str(d), "reset", "-q", "--hard", "FETCH_HEAD"], env=env)
+    try:
+        if not d.exists():
+            d.parent.mkdir(parents=True, exist_ok=True)
+            _bounded_git(
+                [
+                    "git",
+                    "clone",
+                    "-q",
+                    "--depth",
+                    "1",
+                    "--no-tags",
+                    "-c",
+                    "core.symlinks=false",
+                    f"https://github.com/{repo}.git",
+                    str(d),
+                ],
+                d,
+                env,
+            )
+        else:
+            _bounded_git(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin", ref or "HEAD"], d, env)
+            # The fetch brings only the pack; reset writes the working tree, so it is watched too.
+            _bounded_git(["git", "-C", str(d), "reset", "-q", "--hard", "FETCH_HEAD"], d, env)
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
     kb = dir_kb(d)
     if kb > MAX_REPO_KB:
         shutil.rmtree(d, ignore_errors=True)
