@@ -244,3 +244,18 @@ def test_the_sites_own_json_posts_still_work(app, root, ctype):
     body = {"repo": "example/repo", "paths": ["skills/demo"]}
     code, data = call(app, "POST", "/api/submit", body, headers={"Content-Type": ctype})
     assert code == 202 and json.loads(data)["submitted"][0]["skill_id"]
+
+
+@pytest.mark.parametrize("path", ["/", "/api/meta"])
+def test_responses_forbid_framing_send_no_referrer_and_name_no_python(app, root, monkeypatch, path):
+    """#173: one HTML and one JSON response carry both protections, and the Server header has no Python version."""
+    monkeypatch.setattr(server.ev, "evaluator_version", lambda: {"version": "0", "commit": "e" * 40})
+    c = http.client.HTTPConnection(*app, timeout=5)
+    c.request("GET", path)
+    r = c.getresponse()
+    r.read()
+    c.close()
+    assert r.status == 200
+    assert "frame-ancestors 'none'" in r.getheader("Content-Security-Policy")
+    assert r.getheader("Referrer-Policy") == "no-referrer"
+    assert r.getheader("Server") == "evalskills" and "python" not in r.getheader("Server").lower()
