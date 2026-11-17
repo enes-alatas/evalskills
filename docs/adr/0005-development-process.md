@@ -21,3 +21,14 @@ adapted from enes-alatas/spool and trimmed to this repository.
   plan changes, the conventions and CI are the only guard on `main`. The protection settings to apply then:
   require a PR and a green `checks` job, linear history, no force-push or deletion, admins included, 0 required
   reviews.
+
+**Amendment (2026-11-20, #223): the protection is applied, now that the repository is public.** The repository went
+public on 2026-11-20, and a ruleset named `main` was applied to the default branch, active, with no bypass actors:
+- A PR is required, with 0 approvals, and rebase is the only merge method allowed.
+- The `checks` and `security-paths` status checks are required. A branch needn't be up to date with `main` first.
+- Deletion and force-pushes are blocked.
+
+How it differs from the list above:
+- **"Linear history":** there is no linear-history rule. Rebase-only merging keeps PR merges linear instead.
+- **"A green `checks` job":** `security-paths` is required as well.
+- **"Admins included":** the ruleset has no bypass actors, so it applies to everyone, admins included.
