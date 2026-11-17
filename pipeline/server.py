@@ -36,7 +36,7 @@ DISCOVERIES_PER_HOUR_PER_CLIENT = int(os.environ.get("DISCOVERIES_PER_HOUR", "30
 
 
 # The public source link in the header (#77). Only an https://github.com/OWNER/REPO URL is accepted; anything else,
-# or unset, hides the link (the repo is private until it is open-sourced).
+# or unset, hides the link; the host turns it on in its deploy/.env.
 def source_repo_url(value: str) -> str:
     value = (value or "").strip()
     return value if re.fullmatch(r"https://github\.com/[A-Za-z0-9-]{1,39}/[A-Za-z0-9_.-]{1,100}", value) else ""
