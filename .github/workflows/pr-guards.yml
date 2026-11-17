@@ -1,6 +1,6 @@
 # Labels a PR that touches a path in .github/security-review-paths `needs-security-review`. It runs scripts from the
-# base branch, never the PR's, because it holds a write token. Fork PRs get a read-only token, so their reviewer
-# labels them by hand.
+# base branch, never the PR's, because it holds a write token. A fork PR gets a read-only token, so the job lists the
+# paths in its summary, skips the label and passes; its reviewer labels it by hand (#176).
 name: pr-guards
 
 on:
@@ -27,6 +27,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           # The script comes from the base branch. Until main carries it (the PR that adds it), there is
           # nothing trusted to run: say so, and leave the label to the reviewer.
@@ -37,5 +38,9 @@ jobs:
           matches=$(gh pr diff "$PR" --repo "$REPO" --name-only | scripts/security-paths.sh)
           if [ -n "$matches" ]; then
             printf 'Security-review paths touched:\n%s\n' "$matches" >> "$GITHUB_STEP_SUMMARY"
-            gh pr edit "$PR" --repo "$REPO" --add-label needs-security-review
+            if [ "$HEAD_REPO" != "$REPO" ]; then  # a fork: read-only token, so the reviewer labels it
+              echo "::notice::Fork PR: add needs-security-review by hand." | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              gh pr edit "$PR" --repo "$REPO" --add-label needs-security-review
+            fi
           fi
