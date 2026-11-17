@@ -51,6 +51,14 @@ class Upstream(BaseHTTPRequestHandler):
                 send(b'data: {"choices":[{"delta":{"content":"' + b"x" * 1000 + b'"}}]}\n\n')
                 time.sleep(0.01)
             time.sleep(body.get("test_stall", 0))  # upstream goes silent mid-stream
+            leak = body.get("test_stream_key")  # upstream quotes the gateway's key mid-stream (#174)
+            if leak == "whole":
+                send(b'data: {"choices":[{"delta":{"content":"key ' + FAKE_KEY.encode() + b'"}}]}\n\n')
+            elif leak == "split":  # one line, sent 7 bytes a write: no write alone holds an 8-character run of it
+                k = b'data: {"choices":[{"delta":{"content":"' + FAKE_KEY.encode() + b'"}}]}\n\n'
+                for i in range(0, len(k), 7):
+                    send(k[i : i + 7])
+                    time.sleep(0.005)
             send(b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n')
             send(b'data: {"choices":[]' + usage + b"}\n\n")
             send(b"data: [DONE]\n\n")
@@ -64,6 +72,8 @@ class Upstream(BaseHTTPRequestHandler):
             if body.get("test_no_usage")
             else {"choices": [], "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
         )
+        if body.get("test_echo_key"):  # a successful answer that quotes the key (#174)
+            out["choices"] = [{"message": {"content": f"your key is {FAKE_KEY}"}}]
         out = json.dumps(out).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -469,3 +479,31 @@ def test_issue_refuses_a_reused_run_id_cleanly(tmp_path, capsys):
 def test_handler_has_a_socket_timeout():
     cfg = {**gw.DEFAULTS, "allowed_models": [MODEL]}
     assert gw.make_handler(cfg, None, None, FAKE_KEY).timeout == 60
+
+
+def test_a_successful_body_that_quotes_the_key_is_withheld_and_still_metered(env):
+    """#174: the key check ran on error bodies only; a 200 that echoed the key reached the trial."""
+    token = env["state"].issue("run-k")
+    code, data = call(env["base"], "/v1/chat/completions", token, chat(test_echo_key=True))
+    assert code == 502 and FAKE_KEY.encode() not in data and b"withheld" in data
+    (u,) = env["state"].usage("run-k")
+    assert (u["prompt_tokens"], u["completion_tokens"]) == (10, 5)  # billed upstream, so counted here
+
+
+@pytest.mark.parametrize("how", ["whole", "split"])
+def test_a_stream_that_quotes_the_key_is_cut_off_with_an_error(env, how):
+    token = env["state"].issue(f"run-s-{how}")
+    body = chat(stream=True, test_stream_key=how, test_chunked=how == "split")  # split: separate HTTP chunks
+    code, data = call(env["base"], "/v1/chat/completions", token, body)
+    assert code == 200  # the stream had started
+    k = FAKE_KEY.encode()
+    assert k not in data and k[8:16] not in data
+    assert b"withheld" in data and b'"hi"' not in data and b"[DONE]" not in data  # nothing after the leak
+    (u,) = env["state"].usage(f"run-s-{how}")
+    assert u["completion_tokens"] == 3  # upstream was drained for its usage chunk
+
+
+def test_a_clean_stream_is_still_relayed_whole(env):
+    token = env["state"].issue("run-clean")
+    code, data = call(env["base"], "/v1/chat/completions", token, chat(stream=True))
+    assert code == 200 and b'"hi"' in data and b"[DONE]" in data and b"withheld" not in data

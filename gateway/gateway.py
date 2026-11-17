@@ -3,7 +3,7 @@
 Trials and the evaluator get a per-run token instead. The gateway checks it, allows only configured models and
 endpoints, enforces per-run and per-day caps and a global request rate, then forwards to the upstream with the real
 key. It logs counts, never prompts or completions. Standard library only. It never follows an upstream redirect,
-and never relays an upstream error body that could quote the key.
+and never relays an upstream body, error or not, streamed or not, that quotes the key.
 
 It speaks plain HTTP, whatever the port number suggests: it listens on the eval bridge only, never on a public
 interface. A run's token cap is checked before each call, and a requested output limit is clamped to what the run
@@ -110,6 +110,10 @@ def leaks_key(payload: bytes, key: str, window: int = 8) -> bool:
     if len(k) <= window:
         return k in payload
     return any(k[i : i + window] in payload for i in range(len(k) - window + 1))
+
+
+# What a trial gets instead of an upstream answer that quotes the gateway's key.
+WITHHELD = {"error": {"message": "upstream response withheld", "type": "gateway_upstream"}}
 
 
 def today() -> str:
@@ -365,9 +369,10 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
 
             try:
                 with resp:
-                    self.send_response(resp.status)
-                    self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
-                    self.relay_stream(resp, seen, meter, run_id) if stream else self.relay_body(resp, seen, meter)
+                    if stream:
+                        self.relay_stream(resp, seen, meter, run_id)
+                    else:
+                        self.relay_body(resp, seen, meter, run_id)
             finally:
                 meter()  # the relay failed first: whatever usage it saw still counts
             usage = seen["usage"] if isinstance(seen["usage"], dict) else None
@@ -382,13 +387,18 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
                 completion_tokens=(usage or {}).get("completion_tokens"),
             )
 
-        def relay_body(self, resp, seen, meter) -> None:
+        def relay_body(self, resp, seen, meter, run_id: str) -> None:
             payload = resp.read()
             try:
                 seen["usage"] = json.loads(payload).get("usage")
             except (ValueError, AttributeError):
                 pass
             meter()
+            if leaks_key(payload, key):  # a body quoting the key is never relayed, success or not (#174)
+                log("withheld", run=run_id, why="upstream body quotes the key")
+                return self.reply(502, WITHHELD)
+            self.send_response(resp.status)
+            self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
@@ -402,6 +412,8 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
             always set for chat), and the read after a hang-up stops at drain_timeout_s overall, even while upstream
             sends nothing.
             """
+            self.send_response(resp.status)
+            self.send_header("Content-Type", resp.headers.get("Content-Type", "application/json"))
             self.send_header("Cache-Control", "no-cache")
             self.close_connection = True  # no Content-Length: the stream ends when we close
             client = True
@@ -439,6 +451,18 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
                         pass
                 elif line.startswith(b"data: [DONE]"):
                     meter()
+                # The check is per whole line: readline joins upstream's chunks, so a key split across two chunks is
+                # one line here (#174).
+                if client and leaks_key(line, key):
+                    # Nothing more reaches the trial: an error event ends its stream, and upstream is drained for
+                    # metering as after a hang-up.
+                    log("withheld", run=run_id, why="upstream stream quotes the key")
+                    try:
+                        self.wfile.write(b"data: " + json.dumps(WITHHELD).encode() + b"\n\n")
+                        self.wfile.flush()
+                    except OSError:
+                        pass
+                    hung_up()
                 if client:
                     try:
                         self.wfile.write(line)
