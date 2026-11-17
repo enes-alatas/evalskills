@@ -10,7 +10,16 @@ import time
 import urllib.request
 from collections import deque
 
-from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env, read_head  # noqa: F401
+from evaluate import (  # noqa: F401
+    CACHE,
+    MAX_REPO_KB,
+    REPO_RE,
+    CloneTimeout,
+    RepoTooLarge,
+    checkout,
+    git_env,
+    read_head,
+)
 
 MAX_SKILLS_LISTED = 1000  # names and paths only; NVIDIA/skills had 450 on 2026-11-10 (#87)
 
@@ -164,6 +173,8 @@ def discover(url: str) -> dict:
         d, commit = checkout(repo)
     except subprocess.CalledProcessError as e:
         raise DiscoveryError("Could not clone repository") from e
+    except CloneTimeout as e:
+        raise DiscoveryError("Cloning the repository took too long; please try again later") from e
     except RepoTooLarge as e:
         raise DiscoveryError(str(e)) from e
     root = d.resolve()
