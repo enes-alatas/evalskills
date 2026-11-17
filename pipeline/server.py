@@ -619,6 +619,12 @@ class H(BaseHTTPRequestHandler):
         return self.send(404, {"error": "not found"})
 
     def do_POST(self):
+        # Only JSON, before anything is read: another site can't make a visitor's browser send that type without a
+        # CORS preflight, which this server never answers. A form or text/plain POST from elsewhere stops here (#172).
+        ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+        if ctype != "application/json":
+            self.close_connection = True
+            return self.send(415, {"error": "send the request as application/json"})
         try:
             b = self.body()
         except (ValueError, json.JSONDecodeError):
