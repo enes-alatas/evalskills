@@ -286,6 +286,34 @@ def test_lists_and_events_are_filtered_to_the_owner_label(env):
     assert "com.docker.compose.project=p" in json.loads(first["filters"][0])["label"] and first["all"] == ["1"]
 
 
+def _filters(query: str) -> dict:
+    from urllib.parse import parse_qs
+
+    return json.loads(parse_qs(query)["filters"][0])
+
+
+def test_filters_are_always_sent_in_one_form_the_daemon_accepts():
+    """#206: Compose sent {"reference": {"img:tag": true}}, the proxy added the label as a list, and the daemon
+    answered "invalid filter" to the mix, so every trial's `compose up` failed. Every key now goes out as a map."""
+    compose = _filters(dp.Policy.owner_filtered("filters=" + json.dumps({"reference": {"evalskills-trial:ab": True}})))
+    assert compose == {"reference": {"evalskills-trial:ab": True}, "label": {f"{dp.OWNER_LABEL}=1": True}}
+    cli = _filters(dp.Policy.owner_filtered("all=1&filters=" + json.dumps({"label": ["a=b"], "name": ["x"]})))
+    assert cli == {"label": {"a=b": True, f"{dp.OWNER_LABEL}=1": True}, "name": {"x": True}}
+    assert _filters(dp.Policy.owner_filtered("")) == {"label": {f"{dp.OWNER_LABEL}=1": True}}
+    for got in (compose, cli):
+        assert all(isinstance(v, dict) for v in got.values())  # never a mix of the two forms
+    off = _filters(dp.Policy.owner_filtered("filters=" + json.dumps({"label": {"a=b": False}})))
+    assert off == {"label": {"a=b": False, f"{dp.OWNER_LABEL}=1": True}}  # kept as sent: moby applies it either way
+
+
+@pytest.mark.parametrize(
+    "bad", [{"label": "a=b"}, {"label": [1]}, {"reference": 3}, ["label"], {"label": {"a=b": "yes"}}]
+)
+def test_filters_of_another_shape_are_refused(bad):
+    with pytest.raises(dp.Refused):
+        dp.Policy.owner_filtered("filters=" + json.dumps(bad))
+
+
 def test_none_network_mode_is_allowed(env):
     body = create_body(env, NetworkMode="none")
     body["NetworkingConfig"] = None

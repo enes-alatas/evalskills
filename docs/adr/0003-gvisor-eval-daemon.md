@@ -162,3 +162,11 @@ estimated) remain an option, but cost money per run.
   image the proxy had just built (`GET /distribution/<image>/json`). The proxy refuses that, as it refuses every pull,
   so `up` failed for every trial before an agent started. The proxy's rules are unchanged: Compose now uses the local
   image or fails plainly.
+
+**Amendment (2026-11-17, #206): the cause of those `up` failures.**
+- The amendment above named the wrong cause. With `--pull never`, `up` still failed for every trial, and Compose's
+  own output said `Error response from daemon: invalid filter`. Compose lists images with filters in the map form
+  (`{"reference": {"<image>": true}}`). The proxy added its owner label in the list form, and the daemon refuses a
+  query that mixes the two. The proxy now sends every filter key in the map form. `--pull never` stays: Compose has
+  no reason to reach a registry. The 403 that follows each build in the proxy's log is a separate request, which the
+  masked log line doesn't name. It is refused as before. Whether it matters will show on the next host run.

@@ -95,9 +95,9 @@ def context_tar(environment_dir) -> bytes:
 @dataclass(frozen=True)
 class _NoBuildDockerRuntime(ContainerRuntime):
     """Docker, with ``compose up`` never building and never pulling. A build would run under runc on the host's
-    BuildKit. A pull, or the registry lookup Compose makes before one (``GET /distribution/<image>/json``), is refused
-    by the socket proxy, so ``up`` failed for every trial on the host until Compose was told to use the local image
-    the proxy built (#203)."""
+    BuildKit. A pull is refused by the socket proxy anyway, so ``--pull never`` makes Compose use the local image the
+    proxy built, or fail plainly (#203). The trials' ``up`` failures on the host turned out to have another cause,
+    the proxy's filter rewrite (#206)."""
 
     @property
     def up_args(self) -> list[str]:
