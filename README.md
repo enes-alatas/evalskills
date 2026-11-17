@@ -41,7 +41,7 @@ It needs network access to github.com and pypi.org.
 
 ```bash
 git clone https://github.com/NVIDIA/SkillEvaluator.git ~/vendor/SkillEvaluator   # tested at d136a597c547 (0.8.0)
-export SKILLEVALUATOR_DIR=~/vendor/SkillEvaluator
+export SKILLEVALUATOR_DIR=~/vendor/SkillEvaluator   # the default; anything else must be set
 (cd $SKILLEVALUATOR_DIR && uv run --python 3.13 --extra security skillevaluator --version)  # provisions env + scanners
 
 # Evaluate a catalog batch (static Tier 1, about 5–120 s per skill, no API key needed)

@@ -24,7 +24,24 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EVALUATOR_DIR = Path(os.environ.get("SKILLEVALUATOR_DIR", "/home/loop/vendor/SkillEvaluator"))
+# A SkillEvaluator checkout, for local runs (README, Setup). The default is the README's own path; the app container
+# doesn't need one (its scans go to the scanner sidecar), and the pilot sets /opt/skillevaluator (#177).
+EVALUATOR_DIR = Path(os.environ.get("SKILLEVALUATOR_DIR") or Path.home() / "vendor" / "SkillEvaluator")
+
+
+class EvaluatorMissing(FileNotFoundError):
+    pass
+
+
+def require_evaluator() -> Path:
+    """EVALUATOR_DIR, or a clear error that names the variable to set, before anything runs in it."""
+    if not (EVALUATOR_DIR / "pyproject.toml").is_file():
+        raise EvaluatorMissing(
+            f"no SkillEvaluator checkout at {EVALUATOR_DIR}: set SKILLEVALUATOR_DIR to one (README, Setup)"
+        )
+    return EVALUATOR_DIR
+
+
 CACHE = ROOT / "cache" / "repos"
 REPORTS = ROOT / "reports"
 SEED_RESULTS = ROOT / "catalog" / "results.jsonl"
@@ -238,6 +255,7 @@ def evaluator_key(ev: dict) -> str | None:
 
 @functools.lru_cache(maxsize=1)
 def _local_evaluator_version() -> dict:
+    require_evaluator()
     ver = sh(
         [UV, "run", "-q", "--python", "3.13", "skillevaluator", "--version"], cwd=EVALUATOR_DIR, env=git_env()
     ).split()[-1]
@@ -375,6 +393,7 @@ def run_tier1(skill_dir: Path, out: Path, llm: bool, on_start=None) -> tuple[int
     the scanner claims the job for the sidecar (#103), so a job waiting for the scanner is never shown as running."""
     if SCANNER_IN and not llm:
         return run_tier1_sidecar(skill_dir, out, on_start)
+    require_evaluator()
     if on_start:
         on_start()
     env = git_env() | skillspector_deadlines(TIER1_TIMEOUT)
