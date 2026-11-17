@@ -9,8 +9,9 @@ things:
 - preflight checks that runsc is registered with Docker, and not for /dev/kvm (gVisor's systrap platform needs none);
 - before start, every service in SkillEvaluator's hardened compose model must be in the runsc overlay. Harbor's overlay
   doesn't follow a local ``include:``, so an included service would otherwise run under runc. And Compose never
-  builds: ``compose up`` always gets ``--no-build`` (a ``build:`` key on a sidecar, or ``pull_policy: build``, would
-  build on the host's BuildKit). Instead, when the task has a Dockerfile, the environment sends its build context to
+  builds or pulls: ``compose up`` always gets ``--no-build`` (a ``build:`` key on a sidecar, or ``pull_policy: build``,
+  would build on the host's BuildKit) and ``--pull never`` (the proxy refuses every pull, #203). Instead, when the
+  task has a Dockerfile, the environment sends its build context to
   the Docker socket proxy's ``POST /_evalskills/build``. The proxy builds the committed Dockerfile that matches the
   template's (legacy builder, no network, the pinned base image, see gateway/docker_build.py) and returns a tag,
   which then becomes the trial's prebuilt image. A Dockerfile that isn't the template's (a custom environment, or a
@@ -93,11 +94,14 @@ def context_tar(environment_dir) -> bytes:
 
 @dataclass(frozen=True)
 class _NoBuildDockerRuntime(ContainerRuntime):
-    """Docker, with ``compose up`` never building: a build runs under runc on the host's BuildKit."""
+    """Docker, with ``compose up`` never building and never pulling. A build would run under runc on the host's
+    BuildKit. A pull, or the registry lookup Compose makes before one (``GET /distribution/<image>/json``), is refused
+    by the socket proxy, so ``up`` failed for every trial on the host until Compose was told to use the local image
+    the proxy built (#203)."""
 
     @property
     def up_args(self) -> list[str]:
-        return [*super().up_args, "--no-build"]
+        return [*super().up_args, "--no-build", "--pull", "never"]
 
 
 NO_BUILD_DOCKER = _NoBuildDockerRuntime(engine=DOCKER_RUNTIME.engine, compose=DOCKER_RUNTIME.compose)

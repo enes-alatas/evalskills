@@ -156,3 +156,9 @@ estimated) remain an option, but cost money per run.
   2026-11-12 amendment's two ports on `br-evals`.
 - The services' own egress isn't limited by the network. The gateway calls only its configured upstream
   (`gateway.json`), and the egress proxy only its allowlist (`egress-proxy.json`), both enforced in their code.
+
+**Amendment (2026-11-17, #203): `compose up` never pulls either.**
+- `compose up` also gets `--pull never`. On the host's first pilot trials, Compose asked the registry about each
+  image the proxy had just built (`GET /distribution/<image>/json`). The proxy refuses that, as it refuses every pull,
+  so `up` failed for every trial before an agent started. The proxy's rules are unchanged: Compose now uses the local
+  image or fails plainly.

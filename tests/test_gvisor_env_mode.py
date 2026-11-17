@@ -292,8 +292,9 @@ def test_the_check_after_start_asks_the_trusted_daemon(monkeypatch, tmp_path):
     assert seen == [{"PATH": "/x"}, {"PATH": "/x"}]
 
 
-def test_compose_up_never_builds():
-    """#139 review: a build: key on a sidecar, or pull_policy: build, would build under runc during up."""
+def test_compose_up_never_builds_or_pulls():
+    """#139 review: a build: key on a sidecar, or pull_policy: build, would build under runc during up. #203: Compose
+    asked the registry about the proxy-built image before up, the proxy refused it, and every trial failed."""
     rt = g.GvisorEnvironment.runtime()
-    assert rt.up_args[-1] == "--no-build" and rt.up_args[:2] == ["--detach", "--wait"]
+    assert rt.up_args == ["--detach", "--wait", "--no-build", "--pull", "never"]
     assert rt.engine == ("docker",) and rt.compose == ("docker", "compose")
