@@ -60,6 +60,20 @@ TRUSTED_PROXIES = parse_networks(os.environ.get("TRUSTED_PROXIES", DEFAULT_TRUST
 TRUSTED_PROXY_HOPS = int(os.environ.get("TRUSTED_PROXY_HOPS", "1"))  # how many proxies append to the header
 GIT_LOCK = ev.GIT_LOCK
 WAKE = threading.Event()
+# A connection that sends nothing for REQUEST_TIMEOUT_S is closed, and so is one whose request (headers and body)
+# isn't in by REQUEST_DEADLINE_S, however it trickles in. At most MAX_CONNECTIONS are served at once; the rest are
+# closed on arrival, and at most MAX_CONNECTIONS_PER_CLIENT per client, so one client can't hold them all. Slow clients
+# can't hold every thread (#171). Only requests with a body count toward the per-client cap.
+REQUEST_TIMEOUT_S = float(os.environ.get("REQUEST_TIMEOUT_S", "30"))
+REQUEST_DEADLINE_S = float(os.environ.get("REQUEST_DEADLINE_S", "60"))  # for the whole request, headers and body
+MAX_CONNECTIONS = int(os.environ.get("MAX_CONNECTIONS", "64"))
+MAX_CONNECTIONS_PER_CLIENT = int(os.environ.get("MAX_CONNECTIONS_PER_CLIENT", "4"))  # by client(), before the body
+if min(MAX_CONNECTIONS, MAX_CONNECTIONS_PER_CLIENT) < 1 or min(REQUEST_TIMEOUT_S, REQUEST_DEADLINE_S) <= 0:
+    raise SystemExit(
+        "MAX_CONNECTIONS(_PER_CLIENT) must be at least 1, REQUEST_TIMEOUT_S and REQUEST_DEADLINE_S above 0"
+    )
+_CLIENT_LOCK = threading.Lock()
+_CLIENT_CONNECTIONS: dict[str, int] = {}
 SCANNER_RETRY_S = float(os.environ.get("SCANNER_RETRY_S", "30"))  # pause before handing the scanner a job again (#103)
 WAITING_NOTE = "Waiting for the scanner. The scan starts as soon as it is available."
 
@@ -412,11 +426,108 @@ def client_ip(peer: str, forwarded: str | None) -> str:
     return hops[-TRUSTED_PROXY_HOPS]
 
 
+class _DeadlineReader:
+    """The request stream, with one deadline for all of it. Every read waits at most one socket receive, bounded by
+    the per-read timeout and by what is left of the deadline, so a client that drips a byte at a time is cut off when
+    the deadline passes, not when it stops sending (#171)."""
+
+    def __init__(self, raw, sock, per_read: float, deadline: float):
+        self._raw, self._sock, self._per_read, self._deadline = raw, sock, per_read, deadline
+
+    def _arm(self) -> None:
+        left = self._deadline - time.monotonic()
+        if left <= 0:
+            raise TimeoutError("request deadline passed")
+        self._sock.settimeout(min(self._per_read, left))
+
+    def read(self, n: int = -1) -> bytes:
+        out = bytearray()
+        while n < 0 or len(out) < n:
+            self._arm()
+            chunk = self._raw.read1(65536 if n < 0 else min(65536, n - len(out)))
+            if not chunk:
+                break
+            out += chunk
+        return bytes(out)
+
+    def readline(self, limit: int = -1) -> bytes:
+        out = bytearray()
+        while limit < 0 or len(out) < limit:
+            self._arm()
+            buf = self._raw.peek(1)  # at most one receive, and only when nothing is buffered
+            if not buf:
+                break
+            room = len(buf) if limit < 0 else min(len(buf), limit - len(out))
+            end = buf.find(b"\n", 0, room)
+            take = room if end < 0 else end + 1
+            out += self._raw.read(take)  # already buffered: no receive
+            if end >= 0:
+                break
+        return bytes(out)
+
+    def close(self) -> None:
+        self._raw.close()
+
+
 class H(BaseHTTPRequestHandler):
     server_version = "evalskills"
+    timeout = REQUEST_TIMEOUT_S  # per read and write: a client that sends nothing is dropped (#171)
+
+    def setup(self):
+        super().setup()
+        self.rfile = _DeadlineReader(
+            self.rfile, self.connection, self.timeout, time.monotonic() + REQUEST_DEADLINE_S
+        )  # a request that trickles in is cut off at the deadline (#171)
 
     def log_message(self, fmt, *a):
         sys.stderr.write(f"{self.command} {self.path}\n")
+
+    def parse_request(self):
+        """After the headers, before any body: one client sends at most MAX_CONNECTIONS_PER_CLIENT bodies at once
+        (#171). Only a request with a body counts. That is where a slow client can hold a connection past its headers
+        (Caddy reads those itself), and a visitor's page load is all GETs, so it is never refused."""
+        if not super().parse_request():
+            return False
+        if getattr(self, "_client_slot", None) is not None:  # a kept-alive connection already holds its slot
+            return True
+        if not self._has_body():
+            return True
+        key = self.client()
+        with _CLIENT_LOCK:
+            held = _CLIENT_CONNECTIONS.get(key, 0)
+            if held >= MAX_CONNECTIONS_PER_CLIENT:
+                over = True
+            else:
+                over = False
+                _CLIENT_CONNECTIONS[key] = held + 1
+                self._client_slot = key
+        if over:
+            self.close_connection = True
+            self.send(429, {"error": "too many connections from you at once; try again shortly"})
+            return False
+        return True
+
+    def _has_body(self) -> bool:
+        if self.headers.get("Transfer-Encoding"):
+            return True
+        try:
+            return int(self.headers.get("Content-Length") or 0) != 0
+        except ValueError:
+            return True  # unreadable: counted, and body() refuses it
+
+    def finish(self):
+        try:
+            super().finish()
+        finally:
+            key = getattr(self, "_client_slot", None)
+            if key is not None:
+                self._client_slot = None
+                with _CLIENT_LOCK:
+                    left = _CLIENT_CONNECTIONS.get(key, 1) - 1
+                    if left > 0:
+                        _CLIENT_CONNECTIONS[key] = left
+                    else:
+                        _CLIENT_CONNECTIONS.pop(key, None)
 
     def client(self):
         ip = client_ip(self.client_address[0], self.headers.get("X-Forwarded-For"))
@@ -424,6 +535,7 @@ class H(BaseHTTPRequestHandler):
 
     def send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode()
+        self.connection.settimeout(self.timeout)  # the request deadline bounds reading, not the answer (#171)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
@@ -661,6 +773,35 @@ def bootstrap():
     ev.resanitize_public(ev.REPORTS)
 
 
+class Server(ThreadingHTTPServer):
+    """At most `limit` connections at once, each on its own daemon thread. A connection beyond that is closed on
+    arrival, unread: a pile of slow clients then costs one refused connection each, not the site (#171)."""
+
+    daemon_threads = True
+
+    def __init__(self, addr, handler, limit: int = MAX_CONNECTIONS):
+        if limit < 1:
+            raise ValueError("MAX_CONNECTIONS must be at least 1")
+        self._slots = threading.BoundedSemaphore(limit)
+        super().__init__(addr, handler)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
+
+
 def main():
     port = int(sys.argv[sys.argv.index("--port") + 1]) if "--port" in sys.argv else 8080
     bootstrap()
@@ -670,7 +811,7 @@ def main():
     ev.sweep_exchange(2 * (ev.SCANNER_PICKUP_TIMEOUT + ev.TIER1_TIMEOUT + 60))
     threading.Thread(target=worker, daemon=True).start()
     print(f"listening on :{port}", flush=True)
-    ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()
+    Server(("0.0.0.0", port), H).serve_forever()
 
 
 if __name__ == "__main__":
