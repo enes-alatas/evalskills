@@ -471,6 +471,11 @@ class _DeadlineReader:
 
 class H(BaseHTTPRequestHandler):
     server_version = "evalskills"
+    sys_version = ""  # the Server header names no Python version (#173)
+
+    def version_string(self):
+        return self.server_version
+
     timeout = REQUEST_TIMEOUT_S  # per read and write: a client that sends nothing is dropped (#171)
 
     def setup(self):
@@ -540,7 +545,12 @@ class H(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
+        # No framing by another site, and no referrer sent onward from the board's outbound links (#173). HSTS belongs
+        # on the reverse proxy that terminates TLS.
+        self.send_header(
+            "Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'"
+        )
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(data)
 
