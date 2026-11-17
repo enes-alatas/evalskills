@@ -98,3 +98,9 @@ To report a problem, see `CONTRIBUTING.md`. For a vulnerability, see `SECURITY.m
 scripts/install-hooks.sh   # once per clone: the commit and push hooks
 scripts/check.sh           # what CI's checks job runs; the pre-push hook runs it too
 ```
+
+## License
+
+MIT, see [`LICENSE`](LICENSE). Bundled third-party material keeps its own license:
+- QuixBugs, the vendored benchmark: `shared-tasks/quixbugs-python/upstream/LICENSE`.
+- The Geist and Geist Mono fonts (Vercel), served by the web app: SIL Open Font License 1.1, `web/fonts/OFL.txt`.
