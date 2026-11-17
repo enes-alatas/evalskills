@@ -677,7 +677,12 @@ class Policy:
 
     @staticmethod
     def owner_filtered(query: str) -> str:
-        """Add the owner label to a list or events query's filters, so other workloads stay invisible."""
+        """Add the owner label to a list or events query's filters, so other workloads stay invisible.
+
+        The daemon reads filters either all in the map form {"key": {"value": true}} or all in the list form
+        {"key": ["value"]}, and answers "invalid filter" to a mix. Compose sends the map form (its image check before
+        `up`), the docker CLI the list form. So every key is rewritten to the map form, which the daemon has always
+        accepted (#206)."""
         pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k != "filters"]
         filters = {}
         for k, v in parse_qsl(query, keep_blank_values=True):
@@ -688,13 +693,18 @@ class Policy:
                     raise Refused("filters must be JSON") from e
         if not isinstance(filters, dict):
             raise Refused("filters must be an object")
-        label = filters.get("label") or []
-        if isinstance(label, dict):  # the older map form {"k=v": true}
-            label = [k for k, on in label.items() if on]
-        if not isinstance(label, list):
-            raise Refused("filters.label must be a list")
-        filters["label"] = [*label, f"{OWNER_LABEL}=1"]
-        return urlencode([*pairs, ("filters", json.dumps(filters))])
+        as_map = {}
+        for key, values in filters.items():
+            if isinstance(values, dict):
+                if not all(isinstance(on, bool) for on in values.values()):
+                    raise Refused(f"filters.{key} must map values to true or false")
+                as_map[key] = dict(values)  # as sent: the daemon applies an entry whether it says true or false
+            elif isinstance(values, list) and all(isinstance(v, str) for v in values):
+                as_map[key] = dict.fromkeys(values, True)
+            else:
+                raise Refused(f"filters.{key} must be a list or an object")
+        as_map.setdefault("label", {})[f"{OWNER_LABEL}=1"] = True
+        return urlencode([*pairs, ("filters", json.dumps(as_map))])
 
 
 # ---------------------------------------------------------------- routing
