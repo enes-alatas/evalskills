@@ -130,6 +130,7 @@ REPO_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9-]{0,38}/(?!\.\.?\Z)(?!-)[A-Za-z0-
 
 
 def sh(cmd, **kw):
+    kw.setdefault("env", git_env())  # a child gets the allowlisted env only, never a token (ADR-0008)
     try:
         return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw).stdout.strip()
     except subprocess.CalledProcessError as e:

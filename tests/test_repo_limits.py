@@ -24,10 +24,13 @@ def test_a_size_lookup_without_an_answer_refuses_instead_of_cloning(monkeypatch,
     def urlopen(req, timeout):
         raise urllib.error.HTTPError(req.full_url, code, "refused", headers, io.BytesIO())
 
+    monkeypatch.setattr(disc, "_LOOKUP_TOKEN", "")
+    monkeypatch.setattr(disc, "_CALLS", disc.deque())
+
     def checkout(_repo):
         raise AssertionError("must not clone when the size is unknown")
 
-    monkeypatch.setattr(disc.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(disc._OPENER, "open", urlopen)
     monkeypatch.setattr(disc, "checkout", checkout)
     with pytest.raises(disc.DiscoveryError, match=message):
         disc.discover("https://github.com/example/repo")

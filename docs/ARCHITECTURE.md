@@ -22,7 +22,7 @@ but blocked on a model key and the sandbox install.
 - Ranking and statuses: [ADR-0001](adr/0001-rank-on-structure-keep-signals-apart.md)
 - Trust zones: [ADR-0002](adr/0002-three-trust-zones.md)
 - Eval sandbox: [ADR-0003](adr/0003-gvisor-eval-daemon.md)
-- Secrets: [ADR-0004](adr/0004-secrets-live-on-the-host.md)
+- Secrets: [ADR-0004](adr/0004-secrets-live-on-the-host.md), delivered as host env vars since [ADR-0008](adr/0008-secrets-are-host-env-vars.md)
 - Process: [ADR-0005](adr/0005-development-process.md)
 
 ## Limits

@@ -1,13 +1,36 @@
 """Discover skills (folders containing SKILL.md) in a public GitHub repository."""
 
 import json
+import os
 import re
 import subprocess
+import sys
+import threading
+import time
 import urllib.request
+from collections import deque
 
 from evaluate import CACHE, MAX_REPO_KB, REPO_RE, RepoTooLarge, checkout, git_env, read_head  # noqa: F401
 
 MAX_SKILLS_LISTED = 1000  # names and paths only; NVIDIA/skills had 450 on 2026-11-10 (#87)
+
+# The repository lookup authenticates with a fine-grained GitHub token that has no repository access, so it reads only
+# public data, with its owner account's 5,000 requests an hour instead of 60 per server address (#167; ADR-0002,
+# amended 2026-11-17). The host sets it as GITHUB_LOOKUP_TOKEN (ADR-0008). It is taken out of this process's
+# environment at import, so no child process can inherit it. Unset or empty, as in development and CI, lookups go out
+# unauthenticated.
+TOKEN_RE = re.compile(r"[A-Za-z0-9_]{20,255}")
+_LOOKUP_TOKEN = os.environ.pop("GITHUB_LOOKUP_TOKEN", "")
+# The site's own budget of GitHub calls an hour, well under the owner account's 5,000, so a flood of lookups from many
+# clients can't spend the quota that account's other work uses. A cached answer costs nothing.
+LOOKUPS_PER_HOUR = int(os.environ.get("LOOKUPS_PER_HOUR", "2000"))
+_CALLS: deque[float] = deque()
+_CALLS_LOCK = threading.Lock()
+# A repository's answer is reused for this long, so a burst of lookups for one repository costs GitHub one call.
+REPO_META_TTL_S = float(os.environ.get("REPO_META_TTL_S", "300"))
+REPO_META_CACHE_MAX = 512
+_META: dict[str, tuple[float, dict]] = {}
+_META_LOCK = threading.Lock()
 
 URL_RE = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?"
@@ -30,17 +53,77 @@ def parse_repo_url(url: str) -> tuple[str, str | None]:
     return repo, (m.group(3) or None)
 
 
+def lookup_token(raw: str | None = None) -> str | None:
+    """The lookup token, or None to go unauthenticated. Never logged; a malformed value counts as none, said so."""
+    raw = (_LOOKUP_TOKEN if raw is None else raw).strip()
+    if not raw:
+        return None
+    if not TOKEN_RE.fullmatch(raw):
+        print("repo lookup: GITHUB_LOOKUP_TOKEN doesn't hold a token; looking up unauthenticated", file=sys.stderr)
+        return None
+    return raw
+
+
+def _spend_lookup() -> None:
+    """Take one GitHub call from the site's hourly budget, or refuse before calling GitHub."""
+    now = time.monotonic()
+    with _CALLS_LOCK:
+        while _CALLS and now - _CALLS[0] >= 3600:
+            _CALLS.popleft()
+        if len(_CALLS) >= LOOKUPS_PER_HOUR:
+            raise DiscoveryError("Repository lookups are busy right now; please try again later")
+        _CALLS.append(now)
+
+
 def repo_meta(repo: str) -> dict:
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "evalskills"},
-    )
+    """GitHub's description of a public repository (size, default branch, visibility), cached for REPO_META_TTL_S."""
+    key = repo.lower()
+    now = time.monotonic()
+    with _META_LOCK:
+        hit = _META.get(key)
+        if hit and now - hit[0] < REPO_META_TTL_S:
+            return hit[1]
+    meta = _fetch_repo_meta(repo)
+    with _META_LOCK:
+        if len(_META) >= REPO_META_CACHE_MAX:
+            for k, (t, _) in list(_META.items()):
+                if now - t >= REPO_META_TTL_S:
+                    del _META[k]
+            while len(_META) >= REPO_META_CACHE_MAX:
+                del _META[next(iter(_META))]  # the oldest insert
+        _META[key] = (now, meta)
+    return meta
+
+
+class _SameHostRedirects(urllib.request.HTTPRedirectHandler):
+    """A renamed repository answers with a redirect. urllib would resend every header, the token included, wherever
+    that points, so only a redirect within https://api.github.com is followed."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not newurl.startswith("https://api.github.com/"):
+            raise DiscoveryError("GitHub answered with an unexpected redirect, so the repository can't be checked")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_SameHostRedirects)
+
+
+def _fetch_repo_meta(repo: str) -> dict:
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "evalskills"}
+    _spend_lookup()
+    token = lookup_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(f"https://api.github.com/repos/{repo}", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with _OPENER.open(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             raise DiscoveryError("Repository not found or not public") from e
+        if e.code == 401:  # the token is wrong or expired: fail closed, and say so to the operator, not the visitor
+            print("repo lookup: GitHub refused the lookup token (401); replace it", file=sys.stderr)
+            raise DiscoveryError("Repository lookups are unavailable right now; please try again later") from e
         if e.code in (403, 429):  # without the size we must not clone (fail closed)
             h = e.headers or {}
             # Primary limit: Remaining is 0. Secondary limit: a 403 with Retry-After while Remaining is non-zero.

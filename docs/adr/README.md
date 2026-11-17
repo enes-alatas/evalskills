@@ -9,7 +9,8 @@ or write a new record that supersedes it.
 | [0001](0001-rank-on-structure-keep-signals-apart.md) | Rank on the structural score; keep security and live results separate; no fabricated scores |
 | [0002](0002-three-trust-zones.md) | Three trust zones: public app, trusted orchestrator, untrusted trials |
 | [0003](0003-gvisor-eval-daemon.md) | Live trials run under gVisor on a dedicated Docker daemon, with egress limited to a model gateway |
-| [0004](0004-secrets-live-on-the-host.md) | Secrets live only on the host, one container each, as files |
+| [0004](0004-secrets-live-on-the-host.md) | Secrets live only on the host, one container each (delivery superseded by 0008) |
 | [0005](0005-development-process.md) | One shared GitHub identity, PR-only, Enes merges |
 | [0006](0006-no-self-authored-benchmarks.md) | Live runs use SkillEvaluator's content; shared task sets only from public benchmarks |
 | [0007](0007-no-public-live-tier-without-funding.md) | No public live tier without a model budget or sponsor; the free trial key backs only an internal pilot |
+| [0008](0008-secrets-are-host-env-vars.md) | Secrets are env vars the host sets, one container each; children never inherit them |
