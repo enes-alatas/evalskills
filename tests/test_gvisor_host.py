@@ -149,6 +149,18 @@ def test_every_step_has_an_undo_and_parses():
             assert script.read_text().startswith("#!/bin/sh\n") and "\nset -eu\n" in script.read_text()
 
 
+def test_every_step_and_undo_is_committed_executable():
+    """#199: the README runs each step by its path, so a script committed without its x bit fails on the host with
+    Permission denied. The tests run them through sh, which hides that, so this checks the mode git records."""
+    names = [f"deploy/gvisor/host/{n}" for n in STEPS + UNDOS]
+    out = subprocess.run(
+        ["git", "ls-files", "-s", "--", *names], cwd=ROOT, capture_output=True, text=True, check=True, timeout=30
+    ).stdout
+    modes = {line.split("\t", 1)[1]: line.split()[0] for line in out.splitlines()}
+    assert sorted(modes) == sorted(names)  # every one is tracked
+    assert {n: m for n, m in modes.items() if m != "100755"} == {}
+
+
 @pytest.mark.parametrize("script", STEPS + UNDOS)
 def test_without_yes_nothing_changes(host, script):
     p, calls = host["run"](script)
