@@ -187,3 +187,20 @@
   So a repository-wide scan would change at most 6 skills: the 3 with links outside the folder, and the 3 NVIDIA
   skills if SkillSpector resolves sibling paths that way, which is untested. The cause is SkillSpector's reference resolver treating mentions
   as references, the E1 finding. It's upstream behaviour, not our snapshot.
+
+## E12 — live pilot runs 6 to 8: the agent install and the egress allowlist (2026-11-20, #121, #231, #236)
+- Setup: one skill (`addyosmani__agent-skills__skills__debugging-and-error-recovery`), QuixBugs cases, OpenCode on
+  NVIDIA Build through the gateway, under gVisor on the shared host. Enes ran every host step. All three runs were
+  recorded `failed` (`no lift.json`), with no score. Run 6 made 0 gateway requests.
+- **Run 6:** nvm's `install.sh` came from raw.githubusercontent.com. Because the trial image has git, it then
+  git-cloned nvm from `github.com`, which the proxy denied. No agent was installed. `github.com` was added (#231).
+- **Run 7** started 2 minutes after that merge, without the redeploy, so the proxy still had the old list. The
+  redeploy step itself would not have applied it either: each service reads its config once, from a single-file
+  bind mount, and `up -d` kept the old container (#234).
+- **Run 8** had github.com live (checked inside the container). It ran about 24 minutes, and the proxy denied many
+  more hostnames. Enes judged that allowlisting them one at a time wouldn't converge, and opened egress for the
+  pilot only (#236).
+- -> From here on, pilot trials have open web access, and their lift is read as an upper bound (METHODOLOGY,
+  live tier). Each record's `egress` field says which mode it ran under. The proxy logs every host a trial reaches, so the hosts the install really needs can be listed. That
+  list is the starting point for an allowlist outside the pilot.
+

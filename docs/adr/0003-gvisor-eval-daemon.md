@@ -182,3 +182,36 @@ estimated) remain an option, but cost money per run.
   per-run gateway token. Code fetched from `github.com` was already reachable on raw.githubusercontent.com. A
   `git push` with a token the skill brings is a write to an allowlisted host, the same outbound data channel as an
   `npm publish`.
+
+**Amendment (2026-11-20, #236): open egress for the #121 pilot only.**
+- With github.com allowed, the eighth pilot run got further, and the egress proxy denied many more hostnames.
+  Decided by Enes, 2026-11-20, by direct message: for the pilot, the proxy lets any bare hostname through
+  (`open_egress: true` in `deploy/live/egress-proxy.json`), and not a list.
+- Every other rule of the 2026-11-12 amendment holds:
+  - trial clients only;
+  - every address a name resolves to must be public, so no private range, no host and no metadata address;
+  - `host:443` tunnels and plain GET and HEAD on port 80 only;
+  - no IP literals;
+  - every tunnel and request is logged with its host.
+
+  `allowed_hosts` stays in the file, for switching it back off.
+- The host's own addresses are refused too, in either mode. A name that resolves to the host's public address
+  passes the public-address check. The host would then see the connection come from the proxy's private address,
+  and anything on it that trusts private sources would treat the trial as internal. `9-live.sh` passes the host's
+  global addresses (`deploy/live/host-addrs.sh`, plus `EVALSKILLS_DENY_EXTRA` for one only NAT knows) as the
+  proxy's `--deny` list, and the proxy refuses to start without one. Raised by Keen on #237. Decided by Enes, 2026-11-20, by direct message:
+  block them, not accept the risk.
+- Every pilot record carries `egress` (`open` or `allowlist`), read from the running proxy before each run.
+- Accepted risk, beyond the 2026-11-12 one:
+  - A trial can send data to any public site, not only to the allowlisted hosts. A trial still holds no secret,
+    only its per-run gateway token, and only trial networks reach the gateway.
+  - A trial can reach any public site from the shared host's address. The pilot runs only the ten vetted skills in
+    `pilot/skills.tsv`. What's left is the agent, which runs the commands its model chooses and can be steered by
+    the pages it fetches. Abuse reports for that address go to the host's operator, who agrees to open egress from
+    it for the pilot (Enes, 2026-11-20, by direct message).
+  - The agent can look up public answers to its cases. Pilot results are read with that caveat (METHODOLOGY, live
+    tier; EXPERIMENT_LOG E12).
+- gVisor doesn't bear on any of this: it keeps a trial off the host kernel, not off the network.
+- This holds for the #121 pilot only. `open_egress` goes back to false before any run beyond it. A tier beyond the
+  pilot gets an allowlist built from the hosts the pilot's logs show it needed.
+

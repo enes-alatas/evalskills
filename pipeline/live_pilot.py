@@ -31,6 +31,8 @@ GATEWAY = os.environ.get("PILOT_GATEWAY_CONTAINER", "evalskills-gateway")
 MAIN_DOCKER = os.environ.get("PILOT_MAIN_DOCKER_HOST", "unix:///var/run/docker.sock")  # where the gateway runs
 GATEWAY_CONFIG = "/etc/evalskills/gateway.json"
 GATEWAY_STATE = "/var/lib/evalskills-gateway"
+EGRESS_PROXY = os.environ.get("PILOT_EGRESS_CONTAINER", "evalskills-egress-proxy")
+EGRESS_CONFIG = "/etc/evalskills/egress-proxy.json"
 
 
 def load_skills(path: Path = SKILLS) -> list[dict]:
@@ -72,6 +74,20 @@ def gateway(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """A gateway CLI command inside its container, on the main daemon. Output never holds a token."""
     cmd = ["docker", "-H", MAIN_DOCKER, "exec", GATEWAY, "python3", "-I", "/opt/gateway/gateway.py", *args]
     return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=60)
+
+
+def egress_mode() -> str:
+    """What the running egress proxy serves (#236): "open" or "allowlist". It reads this file once, at start, and
+    9-live.sh recreates it whenever the file changes (#234), so the copy inside the container is what it enforces.
+    A run's lift reads differently under each (METHODOLOGY, live tier), so every record carries it."""
+    p = subprocess.run(
+        ["docker", "-H", MAIN_DOCKER, "exec", EGRESS_PROXY, "cat", EGRESS_CONFIG],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    return "open" if json.loads(p.stdout).get("open_egress") is True else "allowlist"
 
 
 def issue_token(run_id: str, dest: Path) -> None:
@@ -154,7 +170,16 @@ def status_of(
 
 
 def record(
-    row: dict, repeat: int, run_id: str, res: dict, lift: dict, counts: dict | None, started: str, evaluator: dict
+    row: dict,
+    repeat: int,
+    run_id: str,
+    res: dict,
+    lift: dict,
+    counts: dict | None,
+    started: str,
+    evaluator: dict,
+    *,
+    egress: str,
 ) -> dict:
     status, reason = status_of(res["exit"], lift, res.get("unsupported", False), res.get("stopped"))
     agent = next(iter(lift.values()), {})
@@ -177,6 +202,7 @@ def record(
         "agent": tier3.AGENT,
         "model": tier3.AGENT_MODEL or None,
         "judge_model": os.environ.get("SKILL_EVAL_LLM_MODEL") or None,
+        "egress": egress,  # "open": the agent could reach public answers; lift is an upper bound (#236)
         "started_at": started,
         "duration_s": res["duration_s"],
         "exit_code": res["exit"],
@@ -189,7 +215,9 @@ def record(
     }
 
 
-def crashed(row: dict, repeat: int, run_id: str, why: str, counts: dict | None, started: str, evaluator: dict) -> dict:
+def crashed(
+    row: dict, repeat: int, run_id: str, why: str, counts: dict | None, started: str, evaluator: dict, *, egress: str
+) -> dict:
     """A run that never reached SkillEvaluator's results: failed, with the reason and no scores."""
     return {
         "id": run_id,
@@ -202,6 +230,7 @@ def crashed(row: dict, repeat: int, run_id: str, why: str, counts: dict | None, 
         "evaluator": evaluator,
         "agent": tier3.AGENT,
         "model": tier3.AGENT_MODEL or None,
+        "egress": egress,
         "started_at": started,
         "status": "failed",
         "reason": why,
@@ -234,6 +263,15 @@ def main(argv: list[str]) -> int:
         now = dt.datetime.now(dt.UTC)
         started = now.isoformat(timespec="seconds")
         run_id = run_id_for(row, i, now)
+        try:  # per run, before its token: the record must say what the trial could reach
+            egress = egress_mode()
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as e:
+            print(
+                f"pilot stopped: could not read the egress proxy's config for {run_id} ({type(e).__name__}).",
+                file=sys.stderr,
+            )
+            print("Check that the egress proxy is up: deploy/gvisor/host/9-live.sh.", file=sys.stderr)
+            return 2
         with tempfile.TemporaryDirectory(prefix="pilot-") as tmp:
             token_file = Path(tmp) / "token"
             try:
@@ -253,13 +291,23 @@ def main(argv: list[str]) -> int:
             finally:
                 revoked = revoke(run_id)
         if res is None:
-            rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator)
+            rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator, egress=egress)
         else:
-            rec = record(row, i, run_id, res, read_lift(res["out"]), usage(run_id), started, evaluator)
+            rec = record(row, i, run_id, res, read_lift(res["out"]), usage(run_id), started, evaluator, egress=egress)
         rec["token_revoked"] = revoked
         with RECORDS.open("a") as f:
             f.write(json.dumps(rec) + "\n")
-        print(json.dumps({"id": run_id, "status": rec["status"], "reason": rec["reason"], "scores": rec["scores"]}))
+        print(
+            json.dumps(
+                {
+                    "id": run_id,
+                    "status": rec["status"],
+                    "reason": rec["reason"],
+                    "scores": rec["scores"],
+                    "egress": egress,
+                }
+            )
+        )
     return 0
 
 

@@ -46,6 +46,11 @@ them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these tw
 - `docker logs evalskills-egress-proxy` lists every `denied` host. The allowlist is a first guess (Debian and Ubuntu
   mirrors, nodejs.org, raw.githubusercontent.com for nvm's install script, github.com for the nvm clone that
   script makes, registry.npmjs.org). Add a host only after reading why it was needed.
+  For the #121 pilot only, `open_egress: true` lets any public hostname through, and every other rule still holds
+  (#236, ADR-0003 amended 2026-11-20). Set it back to false before any run beyond the pilot.
+- The egress proxy also refuses the host's own addresses (`--deny`), which `9-live.sh` lists with
+  `deploy/live/host-addrs.sh`. If the host's public address is only on a NAT in front of it, not on an interface,
+  set `EVALSKILLS_DENY_EXTRA=<address>` for `9-live.sh`. Without a list, the proxy won't start.
 - Streamed completions arrive with a usage chunk. Calls without one show as `unmetered` in `usage`.
 - A call's tokens are counted before the client gets the end of the reply, so the next request is admitted against
   them. A client that hangs up mid-stream is still counted: the gateway reads on to the usage chunk, for at most

@@ -88,6 +88,7 @@ case "$n" in
       load) cat > /dev/null; touch "$S/image" ;;
       version) echo "${STUB_DOCKER_VERSION:-29.6.1}" ;;
       exec) cat "$S/exec_$2" ;;
+      compose) echo "compose env EVALSKILLS_HOST_ADDRS=${EVALSKILLS_HOST_ADDRS:-}" >> "$STUB_LOG" ;;
       info) [ -e "$S/no_runsc" ] && echo '{"runc":{}}' || echo '{"runc":{},"runsc":{}}' ;;
       network)
         case "$2" in
@@ -95,6 +96,7 @@ case "$n" in
           inspect) cat "$S/nets/$5" ;;
         esac ;;
     esac ;;
+  ip) [ "$*" = "-o addr show scope global" ] && cat "$S/ip_addrs" 2>/dev/null ;;
   pgrep) exit 1 ;;
   git) case "$*" in *"rev-parse HEAD"*) echo "${STUB_GIT_HEAD:-}" ;; esac ;;
   uv) echo "uv env UV_PYTHON_INSTALL_DIR=$UV_PYTHON_INSTALL_DIR UV_CACHE_DIR=$UV_CACHE_DIR" >> "$STUB_LOG"
@@ -381,6 +383,10 @@ def live_ready(host, ps: str) -> None:
     for container, name in LIVE_CONFIGS:
         (host["prefix"] / "opt/evalskills/deploy/live" / name).write_text(f'{{"{name}": 2}}\n')
         (host["state"] / f"exec_{container}").write_text(f'{{"{name}": 2}}\n')  # what the container reads
+    (host["state"] / "ip_addrs").write_text(
+        "2: eth0    inet 203.0.113.7/24 brd 203.0.113.255 scope global eth0\\       valid_lft forever\n"
+        "2: eth0    inet6 2001:db8::7/64 scope global \\       valid_lft forever\n"
+    )  # documentation ranges, synthetic
     (host["state"] / "ps_0").write_text(ps)
 
 
@@ -416,6 +422,20 @@ def test_live_step_fails_when_a_container_reads_an_old_config(host, container, n
     (host["state"] / f"exec_{container}").write_text(f'{{"{name}": 1}}\n')  # the inode from before the checkout
     p, _ = host["run"]("9-live.sh", "--yes", check=False)
     assert p.returncode == 1 and f"{container} doesn't read the checked-out {name}" in p.stderr
+
+
+def test_live_step_gives_the_egress_proxy_the_hosts_own_addresses(host):
+    live_ready(host, "")
+    _, calls = host["run"]("9-live.sh", "--yes", EVALSKILLS_DENY_EXTRA="198.51.100.1")
+    assert "compose env EVALSKILLS_HOST_ADDRS=203.0.113.7,2001:db8::7,198.51.100.1" in calls  # #236
+
+
+def test_live_step_refuses_without_the_hosts_addresses(host):
+    live_ready(host, "")
+    (host["state"] / "ip_addrs").write_text("")
+    p, calls = host["run"]("9-live.sh", "--yes", check=False)
+    assert p.returncode == 1 and "could not list this host's addresses" in p.stderr
+    assert not [c for c in calls if c.startswith("docker compose")]
 
 
 def test_live_step_refuses_while_the_socket_proxy_runs(host):

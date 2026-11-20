@@ -12,12 +12,16 @@ set -eu
 LIVE="$P/opt/evalskills/deploy/live"
 COMPOSE="$LIVE/compose.yaml"
 plan "  1. check that the model key file exists and the socket proxy is stopped
-  2. docker compose -f /opt/evalskills/deploy/live/compose.yaml up -d --build --force-recreate
+  2. docker compose -f /opt/evalskills/deploy/live/compose.yaml up -d --build --force-recreate, with this host's own
+     addresses (deploy/live/host-addrs.sh, plus EVALSKILLS_DENY_EXTRA) as the egress proxy's --deny list
   3. check that each container reads the checked-out gateway.json and egress-proxy.json
 Needs steps 3 and 5. Undo: 9-live-undo.sh"
 [ -f "$P/etc/evalskills/secrets/model_key" ] || die "no model key file: see deploy/live/README.md, step 1"
 [ -f "$COMPOSE" ] || die "no /opt/evalskills: run 5-code.sh first"
 systemctl is-active -q evalskills-docker-proxy 2>/dev/null && die "the socket proxy is running: stop it first"
+EVALSKILLS_HOST_ADDRS=$(sh "$HERE/../../live/host-addrs.sh") || die "could not list this host's addresses"
+export EVALSKILLS_HOST_ADDRS
+say "the egress proxy denies $(printf '%s' "$EVALSKILLS_HOST_ADDRS" | tr ',' '\n' | grep -c .) host address(es)"
 docker compose -f "$COMPOSE" up -d --build --force-recreate
 for pair in evalskills-gateway:gateway.json evalskills-egress-proxy:egress-proxy.json; do
   c=${pair%%:*} f=${pair#*:}

@@ -70,7 +70,7 @@ jobs:
           sudo install -d -m 0700 /etc/evalskills/secrets
           echo "ci-synthetic-not-a-key" | sudo tee /etc/evalskills/secrets/model_key > /dev/null
           sudo chown 10002:10002 /etc/evalskills/secrets/model_key && sudo chmod 0400 /etc/evalskills/secrets/model_key
-          sudo docker compose -f deploy/live/compose.yaml up -d --build --wait
+          sudo EVALSKILLS_HOST_ADDRS="$(sh deploy/live/host-addrs.sh)" docker compose -f deploy/live/compose.yaml up -d --build --wait
           nohup python3 -m http.server --bind 0.0.0.0 9999 >/dev/null 2>&1 &  # a host service no trial may reach
           sleep 2
           # control: the host side reaches the gateway at its egress address (step 3's /etc/hosts line points there)
