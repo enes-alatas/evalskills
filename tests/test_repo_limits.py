@@ -152,3 +152,24 @@ def test_a_timed_out_lookup_tells_the_visitor_plainly(tmp_path, git, monkeypatch
     git("hang")
     with pytest.raises(disc.DiscoveryError, match="took too long"):
         disc.discover("https://github.com/example/repo")
+
+
+@pytest.mark.parametrize("ref", ["--upload-pack=x", "-c", ""])
+def test_a_ref_that_git_could_read_as_an_option_is_refused_before_any_git_call(tmp_path, git, monkeypatch, ref):
+    """#220: a ref starting with '-' would be parsed as a git option."""
+    git("write:1024")
+    ev.checkout("example/repo")  # a cached clone, so the next call would fetch
+    monkeypatch.setattr(ev, "_bounded_git", lambda *a: pytest.fail("must not run git"))
+    monkeypatch.setattr(ev.subprocess, "run", lambda *a, **k: pytest.fail("must not run git"))
+    with pytest.raises(ValueError, match="bad ref"):
+        ev.checkout("example/repo", ref)
+
+
+def test_a_refresh_fetch_ends_the_options_before_the_remote_and_ref(tmp_path, git, monkeypatch):
+    git("write:1024")
+    ev.checkout("example/repo")
+    cmds = []
+    monkeypatch.setattr(ev, "_bounded_git", lambda cmd, d, env: cmds.append(cmd))
+    ev.checkout("example/repo", "main")
+    fetch = next(c for c in cmds if "fetch" in c)
+    assert fetch[-3:] == ["--end-of-options", "origin", "main"]
