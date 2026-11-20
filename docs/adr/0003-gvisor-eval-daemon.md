@@ -170,3 +170,15 @@ estimated) remain an option, but cost money per run.
   query that mixes the two. The proxy now sends every filter key in the map form. `--pull never` stays: Compose has
   no reason to reach a registry. The 403 that follows each build in the proxy's log is a separate request, which the
   masked log line doesn't name. It is refused as before. Whether it matters will show on the next host run.
+
+**Amendment (2026-11-20, #231): github.com joins the egress allowlist.**
+- On the host's sixth pilot run, nvm's `install.sh` came from raw.githubusercontent.com, then git-cloned nvm from
+  `github.com`, because the trial image has git. The egress proxy denied that host, so no agent was installed in any
+  trial. `allowed_hosts` now lists `github.com` exactly. Its subdomains, `api.github.com` among them, stay out.
+  Decided by Enes, 2026-11-20, by direct message, over having the socket proxy force nvm's `METHOD=script` into
+  trial containers.
+- The 2026-11-12 accepted risk covers it, and that is the reason, not gVisor. gVisor keeps a trial off the host
+  kernel. It doesn't limit what a trial reaches through the egress proxy. A trial still holds no secret, only a
+  per-run gateway token. Code fetched from `github.com` was already reachable on raw.githubusercontent.com. A
+  `git push` with a token the skill brings is a write to an allowlisted host, the same outbound data channel as an
+  `npm publish`.

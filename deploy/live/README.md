@@ -40,8 +40,8 @@ them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these tw
   (`client not allowed`, or no route). The proxy serves `allowed_clients` (172.31.240.0/21, the trial networks) only. The gateway
   answers anyone who reaches it, but only with a valid run token.
 - `docker logs evalskills-egress-proxy` lists every `denied` host. The allowlist is a first guess (Debian and Ubuntu
-  mirrors, nodejs.org, raw.githubusercontent.com for nvm, registry.npmjs.org). Add a host only after reading why it
-  was needed.
+  mirrors, nodejs.org, raw.githubusercontent.com for nvm's install script, github.com for the nvm clone that
+  script makes, registry.npmjs.org). Add a host only after reading why it was needed.
 - Streamed completions arrive with a usage chunk. Calls without one show as `unmetered` in `usage`.
 - A call's tokens are counted before the client gets the end of the reply, so the next request is admitted against
   them. A client that hangs up mid-stream is still counted: the gateway reads on to the usage chunk, for at most
