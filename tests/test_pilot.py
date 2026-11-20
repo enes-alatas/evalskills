@@ -94,11 +94,13 @@ def test_a_failed_run_records_no_scores(tmp_path):
     out = ev.ROOT / "reports" / "pilot-test-out"
     res = {"exit": 1, "cases": "starter", "out": out, "commit": "c" * 40, "tree_digest": "sha256:0", "duration_s": 1.0}
     row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
-    rec = pilot.record(row, 1, "pilot-r", res, {}, None, "2026-11-12T00:00:00+00:00", {"version": "x", "commit": "y"})
+    ev_ = {"version": "x", "commit": "y"}
+    rec = pilot.record(row, 1, "pilot-r", res, {}, None, "2026-11-12T00:00:00+00:00", ev_, egress="open")
     assert rec["status"] == "failed" and rec["scores"] is None
     assert rec["mode"] == "tier3" and rec["pilot"] is True and ev.is_pilot(rec)
     assert rec["cost_usd"] is None  # unbilled trial key: not a zero
     assert rec["evaluator"] == {"version": "x", "commit": "y"}  # as read before the trials (#200)
+    assert rec["egress"] == "open"  # what the trial could reach (#236)
 
 
 # --- cases labels ---
@@ -125,10 +127,18 @@ def test_a_crashed_run_is_recorded_failed_without_scores():
     row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
     evaluator = {"version": "x", "commit": "y"}
     rec = pilot.crashed(
-        row, 1, "pilot-r", "CalledProcessError: clone failed", None, "2026-11-12T00:00:00+00:00", evaluator
+        row,
+        1,
+        "pilot-r",
+        "CalledProcessError: clone failed",
+        None,
+        "2026-11-12T00:00:00+00:00",
+        evaluator,
+        egress="allowlist",
     )
     assert (rec["status"], rec["scores"], rec["mode"]) == ("failed", None, "tier3")
     assert rec["evaluator"] == evaluator  # provenance as complete as a finished run's
+    assert rec["egress"] == "allowlist"
     assert rec["reason"].startswith("CalledProcessError")
 
 
@@ -151,6 +161,7 @@ def test_no_gateway_stops_the_pilot_plainly(tmp_path, monkeypatch, capsys):
         raise subprocess.CalledProcessError(1, "docker")
 
     monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
+    monkeypatch.setattr(pilot, "egress_mode", lambda: "open")
     monkeypatch.setattr(pilot, "issue_token", down)
     assert pilot.main([]) == 2
     assert "could not issue a gateway token" in capsys.readouterr().err
@@ -458,3 +469,35 @@ def test_as_root_only_a_permission_error_in_the_child_means_it_cannot_connect(tm
     me = pwd.getpwuid(os.getuid())
     assert tier3._can_connect(sock, me) is can
     assert seen["user"] == me.pw_uid and seen["group"] == me.pw_gid  # tried as the trial user
+
+
+@pytest.mark.parametrize(
+    "config,mode", [({"open_egress": True}, "open"), ({"open_egress": False}, "allowlist"), ({}, "allowlist")]
+)
+def test_the_egress_mode_is_read_from_the_running_proxy(monkeypatch, config, mode):
+    seen = []
+
+    def fake_run(cmd, **kw):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"allowed_hosts": ["x.org"], **config}), "")
+
+    monkeypatch.setattr(pilot.subprocess, "run", fake_run)
+    assert pilot.egress_mode() == mode
+    assert seen[0][-3:] == ["evalskills-egress-proxy", "cat", "/etc/evalskills/egress-proxy.json"]
+
+
+def test_an_unreadable_egress_config_stops_the_pilot_before_any_token(tmp_path, monkeypatch, capsys):
+    row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": None, "repeats": 1}
+    monkeypatch.setattr(pilot, "load_skills", lambda: [row])
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
+
+    def down():
+        raise subprocess.CalledProcessError(1, "docker")
+
+    issued = []
+    monkeypatch.setattr(pilot, "egress_mode", down)
+    monkeypatch.setattr(pilot, "issue_token", lambda *a, **k: issued.append(a))
+    assert pilot.main([]) == 2
+    assert "could not read the egress proxy's config" in capsys.readouterr().err
+    assert issued == [] and not (tmp_path / "results.jsonl").exists()

@@ -83,6 +83,13 @@ def test_proxy_allowlist_is_download_hosts_only():
     assert not [h for h in hosts if h.endswith(".github.com")]  # no API, no other subdomain
 
 
+def test_open_egress_is_the_pilots_alone():
+    # On for the #121 pilot only (#236, ADR-0003 amended 2026-11-20). Turning it off, or keeping it for anything
+    # beyond the pilot, changes this test and the ADR together.
+    assert ep.load_config(str(LIVE / "egress-proxy.json"))["open_egress"] is True
+    assert "open egress for the #121 pilot only" in (ROOT / "docs/adr/0003-gvisor-eval-daemon.md").read_text()
+
+
 def test_proxy_serves_the_trial_range_only():
     clients = ep.load_config(str(LIVE / "egress-proxy.json"))["allowed_clients"]
     assert clients == [ipaddress.ip_network(dp.DEFAULTS["network_pool"])]  # the trial networks, not the egress one

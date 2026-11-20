@@ -7,7 +7,7 @@ only, and only when every address a name resolves to is public, so an allowliste
 the host or the LAN. It holds no secret. It logs hostnames, decisions and byte counts, never paths or bodies.
 Standard library only.
 
-Run: python3 -I gateway/egress_proxy.py --config /etc/evalskills/egress-proxy.json
+Run: python3 -I gateway/egress_proxy.py --config /etc/evalskills/egress-proxy.json --deny <the host's addresses>
 """
 
 import argparse
@@ -28,6 +28,8 @@ DEFAULTS = {
     "allowed_hosts": [],
     "allowed_clients": ["127.0.0.0/8"],
     "idle_timeout_s": 120,
+    # Pilot only (#236, ADR-0003 amended 2026-11-20): any bare hostname passes the host check. Every other rule holds.
+    "open_egress": False,
 }
 HOSTNAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", re.IGNORECASE)
 HOP = {"proxy-connection", "proxy-authorization", "connection", "keep-alive", "te", "trailer", "upgrade"}
@@ -53,6 +55,8 @@ def load_config(path: str) -> dict:
         raise ConfigError(f"allowed_clients must list networks: {e}") from e
     if not cfg["allowed_clients"]:
         raise ConfigError("allowed_clients must list at least one network")
+    if not isinstance(cfg["open_egress"], bool):
+        raise ConfigError("open_egress must be true or false")
     return cfg
 
 
@@ -64,31 +68,49 @@ def log(event: str, **fields) -> None:
     )
 
 
-def allowed(host: str, allowlist: set) -> bool:
-    """Exact names only: no wildcards, no IP literals."""
+def allowed(host: str, allowlist: set, open_egress: bool = False) -> bool:
+    """Exact names only: no wildcards, no IP literals. With open_egress, any bare hostname, still no IP literals."""
     host = host.lower().rstrip(".")
     try:
         ipaddress.ip_address(host)
         return False
     except ValueError:
-        return host in allowlist
+        pass
+    if open_egress:  # the length check first: HOSTNAME's own lookahead bounds it too, but never rely on that alone
+        return len(host) <= 253 and bool(HOSTNAME.fullmatch(host))
+    return host in allowlist
 
 
 def is_public(ip) -> bool:
     return ip.is_global
 
 
-def resolve_public(host: str, port: int, resolver=socket.getaddrinfo, public=is_public) -> list:
-    """Every address must be public, or the name is refused outright (no picking the safe one)."""
+def resolve_public(host: str, port: int, resolver=socket.getaddrinfo, public=is_public, denied=()) -> list:
+    """Every address must be public and outside `denied`, or the name is refused outright (no picking the safe one).
+    `denied` holds the host's own addresses (#236): a public one passes is_public, and the host would see the
+    connection come from this container's private address."""
     infos = resolver(host, port, type=socket.SOCK_STREAM)
     addrs = [i[4] for i in infos]
-    if not addrs or not all(public(ipaddress.ip_address(a[0].split("%")[0])) for a in addrs):
+    ips = [ipaddress.ip_address(a[0].split("%")[0]) for a in addrs]
+    if not ips or not all(public(ip) and not any(ip in net for net in denied) for ip in ips):
         return []
     return addrs
 
 
+def parse_denied(value: str) -> list:
+    """The --deny list: comma-separated addresses or networks. Empty is refused, so the proxy never starts without
+    the host's own addresses (9-live.sh passes them)."""
+    try:
+        nets = [ipaddress.ip_network(v.strip(), strict=False) for v in value.split(",") if v.strip()]
+    except ValueError as e:
+        raise ConfigError(f"--deny must list addresses or networks: {e}") from e
+    if not nets:
+        raise ConfigError("--deny is empty: start the proxy through deploy/gvisor/host/9-live.sh")
+    return nets
+
+
 def make_handler(cfg: dict, resolver=socket.getaddrinfo, public=is_public):
-    allowlist = cfg["allowed_hosts"]
+    allowlist, open_egress = cfg["allowed_hosts"], cfg["open_egress"]
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "evalskills-egress"
@@ -114,11 +136,11 @@ def make_handler(cfg: dict, resolver=socket.getaddrinfo, public=is_public):
 
         def connect_upstream(self, host: str, port: int):
             try:
-                addrs = resolve_public(host, port, resolver, public)
+                addrs = resolve_public(host, port, resolver, public, cfg.get("denied_networks", ()))
             except OSError:
                 return None, "does not resolve"
             if not addrs:
-                return None, "resolves to a non-public address"
+                return None, "resolves to a non-public or denied address"
             for addr in addrs:
                 try:
                     return socket.create_connection(addr[:2], timeout=30), None
@@ -130,7 +152,7 @@ def make_handler(cfg: dict, resolver=socket.getaddrinfo, public=is_public):
             host, _, port = self.path.rpartition(":")
             if not host or port != "443":
                 return self.deny(403, self.path, "only host:443 tunnels")
-            if not allowed(host, allowlist):
+            if not allowed(host, allowlist, open_egress):
                 return self.deny(403, host, "host not allowed")
             up, why = self.connect_upstream(host, 443)
             if not up:
@@ -169,7 +191,7 @@ def make_handler(cfg: dict, resolver=socket.getaddrinfo, public=is_public):
                 return self.deny(400, host, "bad port")
             if u.scheme != "http" or port != 80:
                 return self.deny(403, host, "only http://host/ on port 80; use CONNECT for https")
-            if not allowed(host, allowlist):
+            if not allowed(host, allowlist, open_egress):
                 return self.deny(403, host, "host not allowed")
             up, why = self.connect_upstream(host, 80)
             if not up:
@@ -204,10 +226,19 @@ def make_handler(cfg: dict, resolver=socket.getaddrinfo, public=is_public):
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="egress_proxy")
     ap.add_argument("--config", required=True)
-    cfg = load_config(ap.parse_args(argv).config)
+    ap.add_argument("--deny", required=True, help="the host's own addresses, comma-separated (9-live.sh)")
+    args = ap.parse_args(argv)
+    cfg = load_config(args.config)
+    cfg["denied_networks"] = parse_denied(args.deny)
     httpd = ThreadingHTTPServer((cfg["listen_host"], cfg["listen_port"]), make_handler(cfg))
     httpd.daemon_threads = True
-    log("listening", host=cfg["listen_host"], port=cfg["listen_port"], allowed=sorted(cfg["allowed_hosts"]))
+    log(
+        "listening",
+        host=cfg["listen_host"],
+        port=cfg["listen_port"],
+        allowed="any public hostname" if cfg["open_egress"] else sorted(cfg["allowed_hosts"]),
+        denied=len(cfg["denied_networks"]),  # a count: the host's addresses stay out of the log
+    )
     httpd.serve_forever()
     return 0
 

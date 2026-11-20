@@ -36,7 +36,15 @@ services:
     container_name: evalskills-egress-proxy
     networks: { egress: { ipv4_address: 172.31.248.3 } }
     user: "10003:10003"
-    command: ["python3", "-I", "/opt/gateway/egress_proxy.py", "--config", "/etc/evalskills/egress-proxy.json"]
+    # --deny: the host's own addresses, which 9-live.sh passes (#236). Empty, the proxy refuses to start.
+    command:
+      - python3
+      - -I
+      - /opt/gateway/egress_proxy.py
+      - --config
+      - /etc/evalskills/egress-proxy.json
+      - --deny
+      - ${EVALSKILLS_HOST_ADDRS:-}
     volumes:
       - ./egress-proxy.json:/etc/evalskills/egress-proxy.json:ro
 

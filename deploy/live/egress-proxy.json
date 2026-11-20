@@ -14,5 +14,6 @@
   "allowed_clients": [
     "172.31.240.0/21"
   ],
-  "idle_timeout_s": 120
+  "idle_timeout_s": 120,
+  "open_egress": true
 }

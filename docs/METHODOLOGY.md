@@ -53,6 +53,13 @@ embeddings on it. It backs one internal pilot (#121), which we run on ten skills
 (scores, lift, spread between runs, runtime, requests, tokens) may be published, labelled as the pilot's. Agent
 transcripts, raw reports and per-case judge verdicts stay private.
 
+From 2026-11-20 (#236), the pilot's trials have open web access. The agent and the skill could reach any public
+site, including published solutions to the pilot's cases: QuixBugs' fixed programs are public. Until a pilot result
+can show the agent didn't look an answer up, read its lift as an upper bound on what the skill contributes, and not
+as a clean measure. Every pilot record says which it ran under: `egress` is `open` or `allowlist`, read from the
+running proxy before each run. A tier beyond the pilot goes back to a short allowlist (ADR-0003, amended
+2026-11-20).
+
 A funded tier would keep one fixed agent and model per live column, so its scores are comparable only within that
 column. Models are never mixed into one score. The sponsor is named next to every result it paid for, and has no
 say over which skills run or how they are scored. Costs and terms: `docs/SPONSORSHIP.md`.
