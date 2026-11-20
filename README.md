@@ -8,8 +8,9 @@ The pipeline: repository URL → skill discovery → evaluation queue → SkillE
 
 ## What is in the catalog today
 
-- **166 skills from 35 public repositories, 180 runs** (`catalog/results.jsonl`), all static Tier 1 (SkillEvaluator
-  0.8.0). The extra runs are repeat runs for the stability experiment.
+- **166 skills from 35 public repositories, 512 runs** (`catalog/results.jsonl`), all static Tier 1. Each skill's
+  newest result comes from SkillEvaluator v1.0.1 (E13). The older runs stay as history: the initial `d136a59` runs,
+  the stability experiment's repeats, and the E11 re-scan.
 - Each run records the repository, skill path, exact commit, content digest, evaluator version and commit,
   duration and status. Agent, model, test cases and baseline are recorded too, and are empty for static runs, which
   use none. Cost is $0 because static runs make no model calls.

@@ -204,3 +204,35 @@
   live tier). Each record's `egress` field says which mode it ran under. The proxy logs every host a trial reaches, so the hosts the install really needs can be listed. That
   list is the starting point for an allowlist outside the pilot.
 
+
+## E13 — the catalog re-scanned with SkillEvaluator v1.0.1 (2026-11-20, #226)
+- **Why:** the Tier 1 pin moves from `skillevaluator-tier1@sha256:9d5483…` (0.8.0's bundle, reports 0.7.2) to
+  `@sha256:fbff256d…`, the digest upstream's v1.0.1 CI bundle pins (`ci/bundles/1.0.1/skill-checks.yml` at tag
+  `v1.0.1`). The image reports `1.0.1`. 1.0 changes Tier 1 scoring, and Enes approved the move on 2026-11-20.
+- **How:** CI's `catalog-rescan` job, run 44776285389, with the E11 method. It took each skill's newest record (166),
+  checked it out at its recorded commit, confirmed the folder digest, and scanned it with no network, read-only.
+  $0, no model calls. All 166 completed. The new records are appended, and the E11 ones stay as history. Every field
+  our parser reads is still in all 166 reports, with the same meaning.
+- **Structural scores: +1.7 or +1.8 points for 151 skills, unchanged for 14, −1.8 for 1.** Almost all of it is one
+  rule: 1.0 no longer deducts for a missing root `version` (a medium QUALITY finding, worth 5 correctness points).
+  It is gone from 152 skills. The 14 unchanged skills already declared a version. The one that went down,
+  taste-skill (85.0 → 83.2), lost the version deduction but got a new one: "No documented scripts in table format".
+  46 grades go up a letter (30 B → A, 16 C → B).
+- **Rank:** 76 skills keep their place. 22 move more than 5 places, at most 9 up and 29 down. The big falls are the
+  14 skills that already had a version: they stay put while their neighbours gain 1.7 points. Every move is inside
+  the ±3-point noise band (METHODOLOGY).
+- **Overall status:** 43 skills go `failed` → `passed` and 15 `failed` → `incomplete`. Schema & Repository
+  Governance now rates a missing `metadata.author` (120 skills) and an author without an email (22) low or info, not
+  high, so it passes for 129 skills. For the 15, a partial SkillSpector scan is what's left. The board shows each
+  check's status, not the overall one.
+- **Security Scan:** SkillSpector is 2.13.4 (was 2.13.3). Partial scans fall from 132 to 80 skills. The cause is
+  mostly fewer unresolved references (`reference_missing`: 118 → 65 skills). 35 skills go `incomplete` → `passed`, 1
+  goes `incomplete` → `failed`, and the security pill counts change for 10.
+- **#102 (semgrep skill):** Code Risk Analysis is still `incomplete`, but the report now says why: "Semgrep partial
+  scan: 1 file(s) could not be fully parsed (scripts/run-scans.sh:6)". The board shows it as
+  `Incomplete (semgrep)`, never as a pass. It is a parse limit of semgrep on that file, not our sandbox.
+- **New check:** Harness Compatibility. It passes for all 166 skills, with info findings only (the harnesses a skill
+  can run in).
+- -> Scores across the catalog went up 1.7 points, but the gap between skills didn't change. Don't compare a
+  score from before 2026-11-20 with one after: each result names the engine it came from. Skills that already
+  declared a version lost their 5-point lead on that rule.
