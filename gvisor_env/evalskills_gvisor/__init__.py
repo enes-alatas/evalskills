@@ -241,6 +241,8 @@ class GvisorEnvironment(SkillEvaluatorSecureKataEnvironment):
         raise RuntimeError(f"gvisor env mode refused the trial: {why}")
 
 
+GATEWAY_OPENCODE = "skillevaluator.tier3.harbor.local_agents:SkillEvaluatorGatewayOpenCode"
+
 SPEC = EnvironmentBackendSpec(
     import_path="evalskills_gvisor:GvisorEnvironment",
     supports_docker_compose=True,
@@ -249,4 +251,8 @@ SPEC = EnvironmentBackendSpec(
     host_env_vars=frozenset({SOCKET_ENV, UNSUPPORTED_FILE_ENV}),
     host_path_env_vars=frozenset({SOCKET_ENV, UNSUPPORTED_FILE_ENV}),
     install_hint="install evalskills' gvisor_env package next to SkillEvaluator: uv run --with-editable ./gvisor_env",
+    # SkillEvaluator picks its gateway OpenCode wrapper (Chat Completions through @ai-sdk/openai-compatible) only for
+    # its own docker and kata modes. A plug-in mode names it here, or Harbor's stock OpenCode calls the Responses API,
+    # which our gateway refuses (#240).
+    agent_import_paths={"opencode": GATEWAY_OPENCODE},
 )
