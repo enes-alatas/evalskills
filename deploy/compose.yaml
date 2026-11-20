@@ -5,7 +5,7 @@
 #     reverse_proxy 127.0.0.1:8088
 #   }
 # The Tier 1 image, pinned by digest. It must match deploy/scanner/Dockerfile and .github/workflows/skills.yml.
-x-tier1-image: &tier1_image ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+x-tier1-image: &tier1_image ghcr.io/nvidia/skillevaluator-tier1@sha256:fbff256df8f760019539d442b7cb533d7ec50efab37f4482b7b670e2e4b4189a
 
 services:
   evalskills:
