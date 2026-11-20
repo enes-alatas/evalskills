@@ -173,3 +173,31 @@ def test_a_refresh_fetch_ends_the_options_before_the_remote_and_ref(tmp_path, gi
     ev.checkout("example/repo", "main")
     fetch = next(c for c in cmds if "fetch" in c)
     assert fetch[-3:] == ["--end-of-options", "origin", "main"]
+
+
+def _recording(monkeypatch):
+    cmds, real = [], ev._bounded_git
+
+    def rec(cmd, d, env):
+        cmds.append(cmd[3] if cmd[1] == "-C" else cmd[1])  # the git subcommand
+        real(cmd, d, env)
+
+    monkeypatch.setattr(ev, "_bounded_git", rec)
+    return cmds
+
+
+def test_a_first_checkout_at_a_ref_fetches_that_ref(tmp_path, git, monkeypatch):
+    """#222: with no cached clone, checkout(repo, ref) used to return the default branch."""
+    git("write:1024")
+    cmds = _recording(monkeypatch)
+    ev.checkout("example/repo", "c" * 40)
+    assert cmds == ["clone", "fetch", "reset"]
+
+
+def test_a_first_checkout_without_a_ref_only_clones(tmp_path, git, monkeypatch):
+    git("write:1024")
+    cmds = _recording(monkeypatch)
+    ev.checkout("example/repo")
+    assert cmds == ["clone"]
+    ev.checkout("example/repo")  # a cached clone is refreshed as before
+    assert cmds == ["clone", "fetch", "reset"]

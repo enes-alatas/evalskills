@@ -103,9 +103,7 @@ def main(image: str, out_dir: Path, per_category: int = 1) -> int:
             "commit": src["commit"],
         }
         try:
-            d, sha = ev.checkout(src["repo"])
-            if sha != src["commit"]:
-                d, sha = ev.checkout(src["repo"], src["commit"])
+            d, _ = ev.checkout(src["repo"], src["commit"])
             work = Path(tempfile.mkdtemp(prefix="parity-"))
             skill = work / "in" / Path(src["skill_path"]).name
             shutil.copytree(d / src["skill_path"], skill, symlinks=True)
