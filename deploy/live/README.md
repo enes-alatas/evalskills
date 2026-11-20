@@ -17,8 +17,12 @@ them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these tw
    `install -d -m 0700 /etc/evalskills/secrets && (umask 077; read -rs K && printf '%s\n' "$K" > /etc/evalskills/secrets/model_key; unset K)`,
    then `chown 10002:10002 /etc/evalskills/secrets/model_key && chmod 0400 /etc/evalskills/secrets/model_key`.
    Compose mounts a file secret as-is, so the file is owned by the gateway's uid and by nobody else.
-2. `sh deploy/gvisor/host/9-live.sh`, then again with `--yes`: `docker compose up -d --build` on
-   `/opt/evalskills/deploy/live/compose.yaml`. `docker logs evalskills-gateway` shows `listening`.
+2. `sh deploy/gvisor/host/9-live.sh`, then again with `--yes`, with the socket proxy stopped:
+   `docker compose up -d --build --force-recreate` on `/opt/evalskills/deploy/live/compose.yaml`.
+   `docker logs evalskills-gateway` shows `listening`. Run it again after every `5-code.sh` that changes
+   `gateway.json` or `egress-proxy.json`. Each service reads its file once, at start, and a running container keeps
+   the file from before the checkout. So the step always recreates both, and fails unless each container reads the
+   checked-out file (#234).
 3. Trials reach them only through the socket proxy's attach. The host side reaches the gateway at `172.31.248.2`,
    which step 3 names `evals-gateway`.
 4. Trials get the proxy from the trial user's Docker client config, `/var/lib/evals/.docker/config.json` (step 8).

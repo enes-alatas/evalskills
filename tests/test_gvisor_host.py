@@ -21,6 +21,7 @@ STEPS = sorted(p.name for p in HOST.glob("[1-9]-*.sh") if not p.name.endswith("-
 READ_ONLY = {"4-check.sh"}  # changes nothing, so it has no undo
 UNDOS = [s.replace(".sh", "-undo.sh") for s in STEPS if s not in READ_ONLY]
 IMAGE_ID = "sha256:" + "ab" * 32  # synthetic
+LIVE_CONFIGS = [("evalskills-gateway", "gateway.json"), ("evalskills-egress-proxy", "egress-proxy.json")]
 
 # One stub for every command; its behaviour is picked by the name it was called as.
 STUB = r"""#!/bin/sh
@@ -86,6 +87,7 @@ case "$n" in
       image) [ "$2" = inspect ] && { [ -e "$S/image" ] || exit 1; echo "$STUB_IMAGE_ID"; } ;;
       load) cat > /dev/null; touch "$S/image" ;;
       version) echo "${STUB_DOCKER_VERSION:-29.6.1}" ;;
+      exec) cat "$S/exec_$2" ;;
       info) [ -e "$S/no_runsc" ] && echo '{"runc":{}}' || echo '{"runc":{},"runsc":{}}' ;;
       network)
         case "$2" in
@@ -376,6 +378,9 @@ def live_ready(host, ps: str) -> None:
     (host["prefix"] / "etc/evalskills/secrets/model_key").touch()
     (host["prefix"] / "opt/evalskills/deploy/live").mkdir(parents=True)
     (host["prefix"] / "opt/evalskills/deploy/live/compose.yaml").touch()
+    for container, name in LIVE_CONFIGS:
+        (host["prefix"] / "opt/evalskills/deploy/live" / name).write_text(f'{{"{name}": 2}}\n')
+        (host["state"] / f"exec_{container}").write_text(f'{{"{name}": 2}}\n')  # what the container reads
     (host["state"] / "ps_0").write_text(ps)
 
 
@@ -395,10 +400,30 @@ def test_live_undo_refuses_while_the_socket_proxy_runs(host):
     assert not [c for c in calls if c.startswith("docker compose")]
 
 
-def test_live_step_starts_the_gateway_and_proxy(host):
+def test_live_step_recreates_the_gateway_and_proxy(host):
     live_ready(host, "web 0.0.0.0:8080->443/tcp, 127.0.0.1:18443->8443/tcp\n")
     _, calls = host["run"]("9-live.sh", "--yes")
-    assert [c for c in calls if c.startswith("docker compose")]
+    up = [c for c in calls if c.startswith("docker compose")]
+    assert len(up) == 1 and up[0].endswith(" up -d --build --force-recreate")  # a changed mounted file applies (#234)
+    assert {c for c in calls if c.startswith("docker exec")} == {
+        f"docker exec {c} cat /etc/evalskills/{n}" for c, n in LIVE_CONFIGS
+    }
+
+
+@pytest.mark.parametrize("container,name", [*LIVE_CONFIGS])
+def test_live_step_fails_when_a_container_reads_an_old_config(host, container, name):
+    live_ready(host, "")
+    (host["state"] / f"exec_{container}").write_text(f'{{"{name}": 1}}\n')  # the inode from before the checkout
+    p, _ = host["run"]("9-live.sh", "--yes", check=False)
+    assert p.returncode == 1 and f"{container} doesn't read the checked-out {name}" in p.stderr
+
+
+def test_live_step_refuses_while_the_socket_proxy_runs(host):
+    live_ready(host, "")
+    (host["state"] / "active_evalskills-docker-proxy").touch()
+    p, calls = host["run"]("9-live.sh", "--yes", check=False)
+    assert p.returncode == 1 and "socket proxy is running" in p.stderr
+    assert not [c for c in calls if c.startswith("docker compose")]
 
 
 def test_run_disk_refuses_a_sparse_image(host):
