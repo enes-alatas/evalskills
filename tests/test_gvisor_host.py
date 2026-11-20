@@ -426,8 +426,9 @@ def test_live_step_fails_when_a_container_reads_an_old_config(host, container, n
 
 def test_live_step_gives_the_egress_proxy_the_hosts_own_addresses(host):
     live_ready(host, "")
-    _, calls = host["run"]("9-live.sh", "--yes", EVALSKILLS_DENY_EXTRA="198.51.100.1")
+    p, calls = host["run"]("9-live.sh", "--yes", EVALSKILLS_DENY_EXTRA="198.51.100.1")
     assert "compose env EVALSKILLS_HOST_ADDRS=203.0.113.7,2001:db8::7,198.51.100.1" in calls  # #236
+    assert "denies this host's addresses: 203.0.113.7,2001:db8::7,198.51.100.1" in p.stdout  # a NAT'd one shows missing
 
 
 def test_live_step_refuses_without_the_hosts_addresses(host):
@@ -494,6 +495,14 @@ def test_code_step_keeps_python_and_the_cache_under_opt_and_checks_the_trial_use
     venv_python = f"{host['prefix']}/opt/skillevaluator/.venv/bin/python"
     assert f"runuser -u evals -- {venv_python} -I -c import skillevaluator, evalskills_gvisor" in calls
     assert "done: evalskills" in p.stdout
+
+
+def test_code_step_refuses_while_the_socket_proxy_runs(host):
+    code_host(host)
+    (host["state"] / "active_evalskills-docker-proxy").touch()
+    p, calls = host["run"]("5-code.sh", "--yes", "c" * 40, check=False, STUB_GIT_HEAD=SE_PIN)
+    assert p.returncode == 1 and "socket proxy is running" in p.stderr
+    assert not [c for c in calls if c.startswith(("git ", "uv "))]  # the running proxy would keep its old code (#230)
 
 
 def test_code_step_fails_when_the_trial_user_cannot_run_the_venv(host):

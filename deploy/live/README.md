@@ -68,7 +68,9 @@ record. Records go to `reports/pilot/results.jsonl`, which is never committed: t
 Prerequisites on the host: `deploy/gvisor/host/` steps 1-9. That gives this repository at `/opt/evalskills`,
 SkillEvaluator at the pinned version with its `tier3` extra at `/opt/skillevaluator` (`SKILLEVALUATOR_DIR`), and the
 trial user's Docker client `proxies` config. Run it as root from `/opt/evalskills`. Start the socket proxy for the
-pilot and stop it afterwards: `systemctl start evalskills-docker-proxy`. `SKILLEVALUATOR_DIR` must be set: the runner
+pilot (`systemctl start evalskills-docker-proxy`), and stop it afterwards: `systemctl stop evalskills-docker-proxy`,
+then check that `systemctl is-active evalskills-docker-proxy` says `inactive`. `5-code.sh` and `9-live.sh` refuse
+while it runs, because it keeps serving the code it started with (#230). `SKILLEVALUATOR_DIR` must be set: the runner
 reads the evaluator's version from `/opt/skillevaluator/.venv` before the first run, and stops if it isn't there.
 
 ```
