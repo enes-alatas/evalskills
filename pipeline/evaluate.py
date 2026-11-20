@@ -226,9 +226,9 @@ def _bounded_git(cmd: list[str], d: Path, env: dict) -> None:
 
 
 def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
-    """Shallow-clone (or refresh) repo; return (dir, exact commit sha). A clone, fetch or reset that fails, times out
-    or grows past MAX_REPO_KB is stopped, and its folder deleted, so the next lookup starts clean (#169). A checkout
-    over the cap is refused whatever the GitHub API said about its size."""
+    """Shallow-clone (or refresh) repo at ref, or at its default branch; return (dir, exact commit sha). A clone,
+    fetch or reset that fails, times out or grows past MAX_REPO_KB is stopped, and its folder deleted, so the next
+    lookup starts clean (#169). A checkout over the cap is refused whatever the GitHub API said about its size."""
     if not REPO_RE.match(repo):
         raise ValueError(f"bad repo slug: {repo}")
     if ref is not None and (not ref or ref.startswith("-")):
@@ -236,7 +236,8 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
     d = CACHE / repo.replace("/", "__")
     env = git_env()
     try:
-        if not d.exists():
+        cloned = not d.exists()
+        if cloned:
             d.parent.mkdir(parents=True, exist_ok=True)
             _bounded_git(
                 [
@@ -254,7 +255,7 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
                 d,
                 env,
             )
-        else:
+        if not cloned or ref is not None:  # a fresh clone is at the default branch; a ref is fetched onto it (#222)
             _bounded_git(
                 ["git", "-C", str(d), "fetch", "-q", "--depth", "1", "--end-of-options", "origin", ref or "HEAD"],
                 d,

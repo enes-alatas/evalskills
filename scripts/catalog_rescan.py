@@ -80,9 +80,7 @@ def new_record(old: dict, evaluator: dict, stamp: str, attempts: list[dict], rep
 def rescan(image: str, old: dict, evaluator: dict, out_dir: Path) -> tuple[dict | None, dict]:
     src = old["source"]
     row = {"repo": src["repo"], "skill_path": src["skill_path"], "category": old.get("category", "")}
-    d, sha = ev.checkout(src["repo"])
-    if sha != src["commit"]:
-        d, sha = ev.checkout(src["repo"], src["commit"])
+    d, _ = ev.checkout(src["repo"], src["commit"])
     work = Path(tempfile.mkdtemp(prefix="rescan-"))
     try:
         # The folder keeps the name the catalog run gave it (a root skill is named after its cache folder), since
