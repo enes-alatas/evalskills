@@ -79,7 +79,8 @@ def test_gateway_state_dir_is_owned_by_the_gateway_user():
 def test_proxy_allowlist_is_download_hosts_only():
     hosts = ep.load_config(str(LIVE / "egress-proxy.json"))["allowed_hosts"]
     assert "integrate.api.nvidia.com" not in hosts  # model calls go through the gateway, with a token
-    assert not [h for h in hosts if "github.com" == h or h.endswith(".github.com")]  # raw content only, no API
+    assert "github.com" in hosts  # nvm's install.sh git-clones nvm from it (#231)
+    assert not [h for h in hosts if h.endswith(".github.com")]  # no API, no other subdomain
 
 
 def test_proxy_serves_the_trial_range_only():
