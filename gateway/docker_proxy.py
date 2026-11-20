@@ -743,6 +743,9 @@ ROUTES = [
     ("GET", rf"/images/({IMAGE_REF})/json", "image", "pass"),  # other images' Config.Env may hold secrets
     ("DELETE", rf"/images/({IMAGE_REF})", "image", "pass"),
     ("GET", r"/events", None, "filter"),
+    # Compose 2.3x+ lists the project's volumes before `up` and stops if refused (#227). Filtered to the owner label,
+    # and volumes can't be created through the proxy, so the answer is always empty: nothing of anyone else's shows.
+    ("GET", r"/volumes", None, "filter"),
 ]
 ROUTES = [(m, re.compile(p + r"\Z"), k, a) for m, p, k, a in ROUTES]
 

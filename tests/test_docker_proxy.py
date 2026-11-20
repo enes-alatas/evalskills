@@ -277,6 +277,13 @@ def test_lists_and_events_are_filtered_to_the_owner_label(env):
     filters = json.dumps({"label": ["com.docker.compose.project=p"]})
     call(env, "GET", "/v1.47/containers/json?all=1&filters=" + filters.replace(" ", ""))
     call(env, "GET", "/v1.47/events")
+    call(
+        env,
+        "GET",
+        "/v1.47/volumes?filters="
+        + json.dumps({"label": {"com.docker.compose.project=p": True}}, separators=(",", ":")),
+    )
+    assert [t.split("?")[0] for _, t in forwarded(env)] == ["/v1.47/containers/json", "/v1.47/events", "/v1.47/volumes"]
     for _, target in forwarded(env):
         from urllib.parse import parse_qs, urlsplit
 
@@ -763,3 +770,11 @@ def test_container_create_without_a_network_gets_no_evals_gateway(env):
     assert call(env, "POST", "/v1.47/containers/create", body)[0] == 200
     sent = json.loads(env["daemon"].seen[0][3])
     assert "ExtraHosts" not in sent["HostConfig"] or not sent["HostConfig"]["ExtraHosts"]
+
+
+@pytest.mark.parametrize("target", ["/volumes/x", "/v1.47/volumes/x", "/volumes/prune"])
+def test_only_the_volume_list_is_open_not_a_volume_or_prune(env, target):
+    """#227: the list compose asks for, nothing more. A named volume or a prune stays refused."""
+    for method in ("GET", "DELETE", "POST"):
+        assert call(env, method, target, {} if method == "POST" else None)[0] in (403, 404)
+    assert forwarded(env) == []
