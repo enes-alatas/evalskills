@@ -231,6 +231,8 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
     over the cap is refused whatever the GitHub API said about its size."""
     if not REPO_RE.match(repo):
         raise ValueError(f"bad repo slug: {repo}")
+    if ref is not None and (not ref or ref.startswith("-")):
+        raise ValueError("bad ref: it must be non-empty and not start with '-'")  # never read as a git option (#220)
     d = CACHE / repo.replace("/", "__")
     env = git_env()
     try:
@@ -253,7 +255,11 @@ def checkout(repo: str, ref: str | None = None) -> tuple[Path, str]:
                 env,
             )
         else:
-            _bounded_git(["git", "-C", str(d), "fetch", "-q", "--depth", "1", "origin", ref or "HEAD"], d, env)
+            _bounded_git(
+                ["git", "-C", str(d), "fetch", "-q", "--depth", "1", "--end-of-options", "origin", ref or "HEAD"],
+                d,
+                env,
+            )
             # The fetch brings only the pack; reset writes the working tree, so it is watched too.
             _bounded_git(["git", "-C", str(d), "reset", "-q", "--hard", "FETCH_HEAD"], d, env)
     except BaseException:
