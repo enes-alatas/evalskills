@@ -13,8 +13,9 @@ never combines them into a single number.
 * Comparability: every skill gets the same rubric, so these scores can be compared across the catalog and within a
   category. The rubric does treat script-based and guide-only skills a bit differently (see `skill_type` in the
   report).
-* Bias: the rubric encodes NVIDIA's SKILL.md conventions (version, `metadata.tags`, "Use when…" triggers, script
-  tables). Skills written to that format score higher (NVIDIA median 95.6 vs 79–90 for other publishers). It is also
+* Bias: the rubric encodes NVIDIA's SKILL.md conventions (`metadata.tags`, "Use when…" triggers, script tables).
+  Skills written to that format score higher (median 93.8 for NVIDIA's 19 skills, 81–91.5 for other publishers
+  with three or more). Since v1.0.1 (E13), a missing root `version` is no longer deducted. It is also
   coarse: two forks with different SKILL.md content can get the same score.
 * Repeatability: it is deterministic. The same content and the same evaluator version give the same score (see the
   experiment log).
@@ -27,17 +28,17 @@ never combines them into a single number.
 
 ## 2. Security findings (shown, not ranked)
 
-* Sources: the SkillEvaluator Tier 1 scanners: SkillSpector 2.13.3 (rules only, no LLM), Gitleaks, Bandit/Semgrep,
+* Sources: the SkillEvaluator Tier 1 scanners: SkillSpector 2.13.4 (rules only, no LLM), Gitleaks, Bandit/Semgrep,
   PII, dependency audit and Unicode smuggling.
 * Counts are **distinct finding types** per severity. For example, 85 unpinned `npx` calls count as one "MCP Rug Pull"
   finding. The raw counts are kept in the record.
 * These are static pattern matches. They point to places a human should look, not to confirmed vulnerabilities.
 * `partial`: SkillSpector often reports incomplete analysis because SKILL.md code samples mention example files
   such as `document.pdf` that it cannot resolve. In that case the result view says `partial scan` and explains that
-  findings may be missing. Leaderboard rows leave it out, because it applies to most skills, but a partial scan
-  never shows `clean`. It does not hide the issue or treat it as a pass.
-* Schema governance findings (for example, missing `metadata.author`, which the default NVIDIA publication policy rates
-  high) are kept out of the security counts.
+  findings may be missing. Leaderboard rows leave it out, because it applies to about half the skills (80 of 166,
+  E13), but a partial scan never shows `clean`. It does not hide the issue or treat it as a pass.
+* Schema governance findings (for example, missing `metadata.author`, which v1.0.1 rates low) are kept out of the
+  security counts.
 
 ## 3. Live performance (Tier 3), not yet available
 
@@ -110,7 +111,9 @@ evaluator are unchanged: the image digest when there is one, else the commit. Mo
 skills on their next submission. A failed run is never reused: resubmitting the same skill runs it again.
 
 The initial catalog comes from SkillEvaluator `d136a59`. Whether the pinned image scores the same content the same
-way is checked in the experiment log (E10).
+way is checked in the experiment log (E10). Since 2026-11-20 the pin is the v1.0.1 image
+(`skillevaluator-tier1@sha256:fbff256d…`), and the whole catalog was re-scanned with it (E13). 1.0 changed the
+rubric, so most scores rose by 1.7 points. Don't compare a score across that change. Each result names its engine.
 
 ## Safety
 
