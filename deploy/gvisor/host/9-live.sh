@@ -21,7 +21,10 @@ Needs steps 3 and 5. Undo: 9-live-undo.sh"
 systemctl is-active -q evalskills-docker-proxy 2>/dev/null && die "the socket proxy is running: stop it first"
 EVALSKILLS_HOST_ADDRS=$(sh "$HERE/../../live/host-addrs.sh") || die "could not list this host's addresses"
 export EVALSKILLS_HOST_ADDRS
-say "the egress proxy denies $(printf '%s' "$EVALSKILLS_HOST_ADDRS" | tr ',' '\n' | grep -c .) host address(es)"
+# Shown here, on the operator's terminal, so a public address only a NAT knows can be seen to be missing. The proxy
+# logs only the count.
+say "the egress proxy denies this host's addresses: $EVALSKILLS_HOST_ADDRS"
+say "if the host's public address isn't listed, run again with EVALSKILLS_DENY_EXTRA=<address>"
 docker compose -f "$COMPOSE" up -d --build --force-recreate
 for pair in evalskills-gateway:gateway.json evalskills-egress-proxy:egress-proxy.json; do
   c=${pair%%:*} f=${pair#*:}

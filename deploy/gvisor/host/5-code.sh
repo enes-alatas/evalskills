@@ -27,8 +27,12 @@ plan "  1. git clone $REPO to /opt/evalskills and check out ${COMMIT:-<commit>} 
      uv pip install --python .venv/bin/python --no-deps /opt/evalskills/gvisor_env (non-editable)
   4. chown -R root:root both and /opt/uv/python; chmod -R go-w, a+rX
   5. check that $EVALS_USER can run /opt/skillevaluator/.venv/bin/python and import what the trials run
-Both folders are replaced only if they are missing. Needs uv (README). Undo: 5-code-undo.sh"
+Both folders are replaced only if they are missing. Refused while the socket proxy runs. Needs uv (README).
+Undo: 5-code-undo.sh"
 [ -n "$COMMIT" ] || die "give the evalskills commit to install (a commit on main)"
+# The socket proxy runs from /opt/evalskills and keeps the code it started with, so a checkout under it changes
+# nothing it serves (#230: pilot runs 4 and 5 ran through the same, stale process).
+systemctl is-active -q evalskills-docker-proxy 2>/dev/null && die "the socket proxy is running: stop it first"
 [ -x "$UV" ] || die "no uv at /opt/uv/bin/uv: install it first (deploy/gvisor/README.md, \"uv on the host\")"
 getent passwd "$EVALS_USER" >/dev/null || die "no user $EVALS_USER: run 1-user.sh first"
 if [ ! -d "$EV/.git" ]; then
