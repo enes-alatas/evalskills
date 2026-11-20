@@ -1,5 +1,5 @@
 # SkillEvaluator Tier 1 over this repo's own skills (issue #10). Runs only when a skill, the gate or this workflow
-# changes. The image is the one SkillEvaluator 0.8.0's CI bundle names (ci/bundles/0.8.0/skill-checks.yml), pinned by
+# changes. The image is the one SkillEvaluator v1.0.1's CI bundle names (ci/bundles/1.0.1/skill-checks.yml), pinned by
 # digest; Dependabot does not move a digest inside `run:`, so a bump is by hand. It is pulled anonymously and runs
 # with no network, no capabilities, a read-only root and a read-only view of the tree; no secret is passed. We call
 # the image ourselves instead of SkillEvaluator's reusable workflow, so no third-party workflow code runs here and we
@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+      IMAGE: ghcr.io/nvidia/skillevaluator-tier1@sha256:fbff256df8f760019539d442b7cb533d7ec50efab37f4482b7b670e2e4b4189a
       SKILL_PATHS: .claude/skills
       MIN_SCORE: "80"
       LLM_ENABLED: "false"

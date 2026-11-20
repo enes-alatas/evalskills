@@ -2,7 +2,7 @@
 # It runs with no network, no secrets and no Docker socket (deploy/compose.yaml); scanner.py describes the protocol.
 # The digest must match .github/workflows/skills.yml and deploy/compose.yaml (tests/test_deploy_config.py checks it).
 # Build: docker build -f deploy/scanner/Dockerfile -t evalskills-scanner .
-ARG TIER1_IMAGE=ghcr.io/nvidia/skillevaluator-tier1@sha256:9d5483243918937be4f2178f74cf7c622a531dee41e3176906994d52fa14950a
+ARG TIER1_IMAGE=ghcr.io/nvidia/skillevaluator-tier1@sha256:fbff256df8f760019539d442b7cb533d7ec50efab37f4482b7b670e2e4b4189a
 FROM ${TIER1_IMAGE}
 ARG TIER1_IMAGE
 ENV SCANNER_IMAGE=${TIER1_IMAGE} \
