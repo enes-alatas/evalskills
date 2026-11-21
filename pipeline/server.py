@@ -76,6 +76,8 @@ _CLIENT_LOCK = threading.Lock()
 _CLIENT_CONNECTIONS: dict[str, int] = {}
 SCANNER_RETRY_S = float(os.environ.get("SCANNER_RETRY_S", "30"))  # pause before handing the scanner a job again (#103)
 WAITING_NOTE = "Waiting for the scanner. The scan starts as soon as it is available."
+LIST_TTL_S = float(os.environ.get("LIST_TTL_S", "5"))  # the skills list is rebuilt at most this often (#175)
+RATE_WINDOW_S = 3600
 
 
 def db():
@@ -98,9 +100,12 @@ def init_db():
           id INTEGER PRIMARY KEY AUTOINCREMENT, skill_id TEXT, status TEXT, created_at REAL,
           started_at REAL, finished_at REAL, evaluation_id TEXT, note TEXT, client TEXT);
         CREATE TABLE IF NOT EXISTS events(client TEXT, kind TEXT, at REAL);
+        CREATE INDEX IF NOT EXISTS events_by_client ON events(client, kind, at);
+        CREATE INDEX IF NOT EXISTS events_by_time ON events(at);
         """)
         # A crash mid-run leaves a job "running": requeue it.
         c.execute("UPDATE jobs SET status='queued', started_at=NULL WHERE status='running'")
+    LISTING.invalidate()
 
 
 def inside(repo_dir, path):
@@ -156,6 +161,7 @@ def import_results():
             add_record(c, rec, meta.get(sid))
             if sid in meta:
                 c.execute("UPDATE skills SET category=? WHERE id=? AND origin='catalog'", (meta[sid], sid))
+    LISTING.invalidate()
 
 
 def read_desc(rec):
@@ -192,6 +198,39 @@ def add_record(c, rec, category=None):
 
 
 # ---------------------------------------------------------------- views
+
+
+class ListCache:
+    """The skills list, built once and reused (#175). A build is reused until a write invalidates it or it is
+    LIST_TTL_S old. One build runs at a time, so a burst of requests costs one build, not one each. A write bumps
+    the generation after its commit; a build that overlaps the bump is kept under the older generation, so the next
+    request builds again."""
+
+    def __init__(self):
+        self._gen_lock, self._build_lock = threading.Lock(), threading.Lock()
+        self.gen, self.builds = 0, 0
+        self._rows, self._built_gen, self._built_at = None, -1, 0.0
+
+    def invalidate(self) -> None:
+        with self._gen_lock:
+            self.gen += 1
+
+    def get(self, build):
+        with self._build_lock:
+            gen = self.gen
+            fresh = time.monotonic() - self._built_at < LIST_TTL_S
+            if self._rows is None or self._built_gen != gen or not fresh:
+                self._rows, self._built_gen, self._built_at = build(), gen, time.monotonic()
+                self.builds += 1
+            return self._rows
+
+
+LISTING = ListCache()
+
+
+def build_listing() -> list:
+    with db() as c:
+        return mark_collisions([skill_row(c, s) for s in c.execute("SELECT * FROM skills")])
 
 
 def engine_label(evaluator) -> str | None:
@@ -367,6 +406,7 @@ def process_next() -> bool:
     def started(jid=job["id"]):
         with db() as c:
             c.execute("UPDATE jobs SET status='running', started_at=?, note=NULL WHERE id=?", (time.time(), jid))
+        LISTING.invalidate()
 
     status, eid, note = "failed", None, None
     try:
@@ -387,6 +427,7 @@ def process_next() -> bool:
         # Not a result: the job stays queued and says why, and is offered again after a pause (#65, #103).
         with db() as c:
             c.execute("UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (WAITING_NOTE, job["id"]))
+        LISTING.invalidate()
         time.sleep(SCANNER_RETRY_S)
         return False
     except ValueError as e:
@@ -399,6 +440,7 @@ def process_next() -> bool:
             "UPDATE jobs SET status=?, finished_at=?, evaluation_id=?, note=? WHERE id=?",
             (status, time.time(), eid, note, job["id"]),
         )
+    LISTING.invalidate()  # after the commit: a list built from here on shows the result
     return True
 
 
@@ -406,7 +448,8 @@ def process_next() -> bool:
 
 
 def rate_ok(c, client, kind, limit):
-    since = time.time() - 3600
+    since = time.time() - RATE_WINDOW_S
+    c.execute("DELETE FROM events WHERE at<=?", (since,))  # past the window, a row counts for nothing (#175)
     n = c.execute("SELECT COUNT(*) FROM events WHERE client=? AND kind=? AND at>?", (client, kind, since)).fetchone()[0]
     if n >= limit:
         return False
@@ -605,9 +648,7 @@ class H(BaseHTTPRequestHandler):
                 },
             )
         if p == "/api/skills":
-            with db() as c:
-                rows = mark_collisions([skill_row(c, s) for s in c.execute("SELECT * FROM skills")])
-            return self.send(200, rows)
+            return self.send(200, LISTING.get(build_listing))
         if p.startswith("/api/skills/"):
             sid = p[len("/api/skills/") :]
             from urllib.parse import unquote
@@ -732,6 +773,7 @@ class H(BaseHTTPRequestHandler):
                         (sid, "queued", time.time(), client),
                     )
                     out.append({"path": path, "skill_id": sid, "job": cur.lastrowid})
+            LISTING.invalidate()
             WAKE.set()
             return self.send(202, {"submitted": out})
         return self.send(404, {"error": "not found"})
