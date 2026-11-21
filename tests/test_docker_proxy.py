@@ -778,3 +778,44 @@ def test_only_the_volume_list_is_open_not_a_volume_or_prune(env, target):
     for method in ("GET", "DELETE", "POST"):
         assert call(env, method, target, {} if method == "POST" else None)[0] in (403, 404)
     assert forwarded(env) == []
+
+
+# ------------------------------------------------------------------ what the log shows (#229)
+
+
+@pytest.mark.parametrize(
+    ("path", "shown"),
+    [
+        ("/v1.47/volumes", "/v1.47/volumes"),
+        ("/v1.47/containers/0123456789abcdef/json", "/v1.47/containers/…/json"),
+        ("/containers/mytrial-main-1/logs", "/containers/…/logs"),
+        ("/v1.47/exec/a1b2c3/start", "/v1.47/exec/…/start"),
+        ("/v1.47/networks/p_default", "/v1.47/networks/…"),
+        ("/v1.47/images/ghcr.io/o/img:1.0/json", "/v1.47/images/…/json"),
+        ("/v1.47/images/sha256:00ff", "/v1.47/images/…"),
+        # a path the proxy doesn't know: plain lowercase words stay, anything else is blanked
+        ("/v1.47/distribution/docker.io/library/alpine:3/json", "/v1.47/distribution/…/library/…/json"),
+        ("/v1.47/volumes/create", "/v1.47/volumes/create"),
+        ("/v1.47/containers/abc123/export", "/v1.47/containers/…/export"),
+        ("/v1.47/secrets/Tok3n-XYZ", "/v1.47/secrets/…"),
+    ],
+)
+def test_the_log_names_the_route_and_blanks_its_identifiers(path, shown):
+    assert dp.shown_path(path) == shown
+
+
+def test_a_shown_path_is_cut_to_80_characters():
+    assert len(dp.shown_path("/v1.47/" + "/".join(["word"] * 40))) == 80
+
+
+def test_a_refusal_names_its_route(env, capsys):
+    status, doc = call(env, "GET", "/v1.47/plugins")
+    assert status == 403 and "GET /v1.47/plugins is not allowed" in doc["message"]
+    assert "GET /v1.47/plugins is not allowed" in capsys.readouterr().err
+
+
+def test_a_forward_logs_the_route_without_the_id(env, capsys):
+    call(env, "GET", "/v1.47/images/trial-img/json")
+    logged = [json.loads(line) for line in capsys.readouterr().err.splitlines() if '"forward"' in line]
+    assert {"method": "GET", "route": "/v1.47/images/…/json"}.items() <= logged[-1].items()
+    assert "trial-img" not in json.dumps(logged)
