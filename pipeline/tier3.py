@@ -380,9 +380,21 @@ def stop_trial(p: subprocess.Popen, uid: int) -> None:
     raise Unsafe(f"refusing to go on: processes of uid {uid} survived SIGKILL; the trial folder is left in place")
 
 
+TRIAL_IMAGE_TAG = re.compile(r"evalskills-trial:[0-9a-f]{16}\Z")  # what the proxy's builder tags (docker_build.py)
+
+
+def _trial_image(item: dict) -> bool:
+    """An image the proxy built for one trial: owner-labelled (the listing is filtered to that) and tagged only as
+    evalskills-trial:<16 hex>, or untagged. Anything else, a base image above all, is left alone."""
+    tags = [t for t in item.get("RepoTags") or [] if t != "<none>:<none>"]
+    return all(isinstance(t, str) and TRIAL_IMAGE_TAG.match(t) for t in tags)
+
+
 def remove_trial_objects(sock: str = EVALS_SOCKET) -> list[str]:
-    """Remove every container and network the proxy shows us (only ours carry its owner label). Harbor does this
-    when a trial ends normally; after a timeout or a kill nothing else would. Returns what could not be removed."""
+    """Remove every container and network the proxy shows us (only ours carry its owner label), then the images it
+    built for the run's trials (#205): they live on the host's root disk, outside the capped trial disk. Harbor
+    removes containers and networks when a trial ends normally; after a timeout or a kill nothing else would, and
+    nothing removes the images. Returns what could not be removed."""
     failed = []
 
     def call(method, url):
@@ -397,6 +409,7 @@ def remove_trial_objects(sock: str = EVALS_SOCKET) -> list[str]:
     for kind, listing, remove in (
         ("container", "/containers/json?all=1", "/containers/{}?force=1&v=1"),
         ("network", "/networks", "/networks/{}"),
+        ("image", "/images/json", "/images/{}?force=1"),
     ):
         try:
             status, body = call("GET", listing)
@@ -409,6 +422,8 @@ def remove_trial_objects(sock: str = EVALS_SOCKET) -> list[str]:
         for item in items:
             oid = str(item.get("Id", ""))
             if kind == "network" and item.get("Name") in ("bridge", "host", "none"):
+                continue
+            if kind == "image" and not _trial_image(item):
                 continue
             try:
                 ok = call("DELETE", remove.format(oid))[0] in (200, 204, 404)
