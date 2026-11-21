@@ -386,6 +386,16 @@ def test_leftover_containers_and_networks_are_removed_through_the_proxy(tmp_path
             calls.append(("GET", self.path))
             if self.path.startswith("/containers"):
                 return self.reply(200, [{"Id": "a" * 64}])
+            if self.path.startswith("/images"):
+                return self.reply(
+                    200,
+                    [
+                        {"Id": "sha256:" + "c" * 64, "RepoTags": ["evalskills-trial:0123456789abcdef"]},
+                        {"Id": "sha256:" + "d" * 64, "RepoTags": None},  # untagged, but built by the proxy
+                        {"Id": "sha256:" + "e" * 64, "RepoTags": ["evalskills/trial-base:1"]},  # never removed
+                        {"Id": "sha256:" + "f" * 64, "RepoTags": ["evalskills-trial:abc", "x:1"]},
+                    ],
+                )
             self.reply(200, [{"Id": "n" * 64, "Name": "t3_default"}, {"Id": "b" * 64, "Name": "bridge"}])
 
         def do_DELETE(self):
@@ -403,7 +413,12 @@ def test_leftover_containers_and_networks_are_removed_through_the_proxy(tmp_path
     assert ("DELETE", f"/containers/{'a' * 64}?force=1&v=1") in calls
     assert ("DELETE", f"/networks/{'n' * 64}") in calls and not any("b" * 64 in c[1] for c in calls)
     assert left == ["network " + "n" * 12]
-    assert tier3.remove_trial_objects(f"unix://{tmp_path}/absent.sock") == ["container list", "network list"]
+    assert ("GET", "/images/json") in calls  # the proxy filters this listing to owner-labelled images
+    images = [c[1] for c in calls if c[0] == "DELETE" and c[1].startswith("/images/")]
+    assert images == [f"/images/sha256:{'c' * 64}?force=1", f"/images/sha256:{'d' * 64}?force=1"]
+    assert calls.index(("GET", "/images/json")) > max(i for i, c in enumerate(calls) if c[1].startswith("/networks"))
+    absent = tier3.remove_trial_objects(f"unix://{tmp_path}/absent.sock")
+    assert absent == ["container list", "network list", "image list"]
 
 
 def test_lift_is_never_read_through_a_link(tmp_path):
