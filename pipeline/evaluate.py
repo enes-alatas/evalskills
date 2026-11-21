@@ -764,6 +764,29 @@ def _cut(message: str) -> str:
     return title + (OMITTED if ":" in message else "")
 
 
+def _scanner_categories(d: dict) -> set[str]:
+    """The PII/SECRET categories a result carries in its findings or its legacy strings, whatever its validator is
+    called. A result that carries one is scanner-owned even under a name SCANNER_VALIDATORS doesn't know (#243)."""
+    found = {f.get("category") for f in d.get("findings") or [] if isinstance(f, dict)}
+    legacy = d.get("legacy") if isinstance(d.get("legacy"), dict) else {}
+    for key in ("errors", "warnings", "messages"):
+        for s in legacy.get(key) or []:
+            tag = LEGACY_TAG.match(s) if isinstance(s, str) else None
+            if tag:
+                found.add(tag.group(1))
+    return found & SCANNER_CATEGORIES
+
+
+def unknown_scanner_validators(report: dict) -> set[str]:
+    """Validators that report PII or secret findings under a name the sanitizer doesn't list. The sanitizer still
+    redacts them (fail closed), but a repin that renames a validator should be noticed, not absorbed silently."""
+    return {
+        str(r.get("validator"))
+        for r in report.get("results") or []
+        if isinstance(r, dict) and _scanner_categories(r) and r.get("validator") not in SCANNER_VALIDATORS
+    }
+
+
 def _scanner_owned(d: dict, inherited: bool) -> bool:
     names = [d.get("validator"), *(d.get("validators") or [])]
     validators = {n for n in names if isinstance(n, str)}
@@ -772,6 +795,7 @@ def _scanner_owned(d: dict, inherited: bool) -> bool:
         or bool(validators & SCANNER_VALIDATORS)
         or d.get("category") in SCANNER_CATEGORIES
         or d.get("check_name") in ("emails", "phones")
+        or bool(_scanner_categories(d))
     )
 
 
