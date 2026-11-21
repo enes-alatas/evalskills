@@ -88,6 +88,12 @@ root copies the report's plain files to `reports/` when the trial ends (ADR-0003
 A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable
 cases as `inconclusive`, and one whose Dockerfile the proxy refuses as `unsupported`. None of them gets a score.
 
+While a run goes, SkillEvaluator's output is shown on the terminal as it arrives, each line prefixed with the run's
+ID, and the same output is kept in the report's `run.log` (#239). The text comes from the trial, so escape sequences
+and control characters are removed, lines are cut to 200 characters, and at most 50 lines a second are shown; the
+rest are counted and stay in `run.log`. SkillEvaluator prints a "still running" line every minute, so a terminal that
+stays silent for longer means something stalled. `TIER3_PROGRESS=0` turns this off.
+
 ## Known limits
 - Trial-to-gateway traffic is plain HTTP on the local bridge. The per-run token crosses it, and it is worthless
   once the run is revoked.

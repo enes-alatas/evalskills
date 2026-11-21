@@ -285,7 +285,7 @@ def main(argv: list[str]) -> int:
                 return 2
             try:
                 env = tier3.trial_env({**os.environ, "TIER3_GATEWAY_TOKEN_FILE": str(token_file)})  # Unsafe stops all
-                res, crash = tier3.run(row["repo"], row["skill_path"], row["task_set"], env), None
+                res, crash = tier3.run(row["repo"], row["skill_path"], row["task_set"], env, label=run_id), None
             except Exception as e:  # a clone or setup error fails this run, visibly, and the pilot goes on
                 res, crash = None, f"{type(e).__name__}: {str(e)[:200]}"
             finally:
