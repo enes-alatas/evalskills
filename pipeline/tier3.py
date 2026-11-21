@@ -20,6 +20,7 @@ import http.client
 import json
 import os
 import pwd
+import re
 import resource
 import shutil
 import signal
@@ -462,11 +463,88 @@ def copy_report(src: Path, dst: Path, max_bytes: int = MAX_REPORT_BYTES) -> list
     return skipped
 
 
-def _wait(p: subprocess.Popen, log_f, started: float) -> tuple[int | None, str | None]:
+# Progress (#239): SkillEvaluator's own output is passed to the operator's terminal as it arrives, as well as kept in
+# run.log. It can carry trial-controlled text, so each line is cleaned before it is shown. TIER3_PROGRESS=0 turns
+# it off.
+PROGRESS = os.environ.get("TIER3_PROGRESS", "1") != "0"
+PROGRESS_WIDTH = 200  # characters shown per line
+PROGRESS_LINES_PER_PUMP = 50  # lines shown per second at most; the rest are counted, and stay in run.log
+PROGRESS_MAX_PARTIAL = 4096  # bytes of an unfinished line held before it is shown anyway
+PROGRESS_BYTES_PER_PUMP = 1024**2  # read per second at most, so the time and log caps are still checked
+_ESCAPE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[PX^_][^\x1b]*(?:\x1b\\)?|[ -/]*[0-~])"
+)
+# C0 and C1 controls, and the Unicode format characters that reorder or hide text (bidi overrides, zero-width).
+_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f-\x9f\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]")
+
+
+def progress_text(raw: bytes) -> str:
+    """One line of trial output, safe for a terminal: escapes and controls removed, cut to PROGRESS_WIDTH."""
+    text = _ESCAPE.sub("", raw.decode(errors="replace"))
+    shown = [part for part in text.split("\r") if part.strip()]  # a \r redraw: keep what is finally on screen
+    return _CONTROL.sub("", (shown[-1] if shown else "").replace("\t", " ")).strip()[:PROGRESS_WIDTH]
+
+
+class _Progress:
+    """Reads the trial's log from where it last stopped and passes whole lines on. Reads with pread, so the log's
+    own file offset, which the trial writes at, is never moved."""
+
+    def __init__(self, fd: int, label: str, out=None):
+        self.fd, self.label, self.out = fd, label, out or sys.stderr
+        self.offset, self.partial = 0, b""
+
+    def pump(self, final: bool = False) -> None:
+        lines, budget = [], PROGRESS_BYTES_PER_PUMP
+        while budget > 0 and self.offset < MAX_LOG_BYTES:
+            chunk = os.pread(self.fd, min(65536, budget, MAX_LOG_BYTES - self.offset), self.offset)
+            if not chunk:
+                break
+            self.offset += len(chunk)
+            budget -= len(chunk)
+            *done, self.partial = (self.partial + chunk).split(b"\n")
+            lines += done
+            if len(self.partial) > PROGRESS_MAX_PARTIAL:  # a line with no end: show what there is
+                lines.append(self.partial)
+                self.partial = b""
+        if final and self.partial:
+            lines.append(self.partial)
+            self.partial = b""
+        shown = [text for text in map(progress_text, lines) if text]
+        for text in shown[:PROGRESS_LINES_PER_PUMP]:
+            print(f"[{self.label}] {text}", file=self.out, flush=True)
+        if len(shown) > PROGRESS_LINES_PER_PUMP:
+            n = len(shown) - PROGRESS_LINES_PER_PUMP
+            print(f"[{self.label}] … {n} more line(s) not shown, kept in run.log", file=self.out, flush=True)
+
+
+def progress_for(log_f, label: str, out=None) -> "_Progress | None":
+    return _Progress(log_f.fileno(), label, out) if PROGRESS else None
+
+
+def _pump(progress: "_Progress | None", final: bool = False) -> "_Progress | None":
+    """Progress is a convenience, and it never changes an outcome or skips containment: if showing it fails (a closed
+    pipe, a lost terminal), it stops for the rest of the run, and the run goes on. → the progress to use next time."""
+    if progress is None:
+        return None
+    try:
+        progress.pump(final)
+        return progress
+    except Exception as e:  # noqa: BLE001 - whatever the display hit, the trial is still waited for and stopped
+        try:
+            print(f"progress display stopped: {type(e).__name__}", file=sys.stderr, flush=True)
+        except Exception:  # noqa: BLE001, S110 - stderr itself may be what failed
+            pass
+        return None
+
+
+def _wait(p: subprocess.Popen, log_f, started: float, progress=None) -> tuple[int | None, str | None]:
     """Wait for the trial within its time and log caps. → (exit code, or None when stopped; why it was stopped)."""
     while True:
+        progress = _pump(progress)
         try:
-            return p.wait(timeout=1), None
+            code = p.wait(timeout=1)
+            _pump(progress, final=True)
+            return code, None
         except subprocess.TimeoutExpired:
             pass
         if time.monotonic() - started > TIER3_TIMEOUT:
@@ -483,6 +561,8 @@ def run(
     ref: str | None = None,
     run_root: Path = RUN_ROOT,
     cleanup=remove_trial_objects,
+    label: str | None = None,
+    progress_out=None,
 ) -> dict:
     """One live evaluation. Returns its exit code, cases, report dir, commit and tree digest; never a score.
 
@@ -524,7 +604,7 @@ def run(
                 preexec_fn=_limit_files,  # the pilot is single-threaded
                 **_as_user(user),
             )
-            code, why = _wait(p, log_f, started)
+            code, why = _wait(p, log_f, started, progress_for(log_f, label or Path(skill_path).name, progress_out))
             duration = round(time.monotonic() - started, 1)
             keep = True  # until stop_trial returns, nothing of the trial is touched
             stop_trial(p, user.pw_uid)
