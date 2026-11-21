@@ -77,6 +77,9 @@ def new_record(old: dict, evaluator: dict, stamp: str, attempts: list[dict], rep
     return rec
 
 
+UNKNOWN_VALIDATOR = "refused: PII or secret findings under a validator the sanitizer doesn't list"
+
+
 def rescan(image: str, old: dict, evaluator: dict, out_dir: Path) -> tuple[dict | None, dict]:
     src = old["source"]
     row = {"repo": src["repo"], "skill_path": src["skill_path"], "category": old.get("category", "")}
@@ -101,6 +104,11 @@ def rescan(image: str, old: dict, evaluator: dict, out_dir: Path) -> tuple[dict 
             if not crash:
                 break
         report = json.loads(rep_path.read_text()) if rep_path.is_file() else None
+        unknown = ev.unknown_scanner_validators(report) if report else set()
+        if unknown:
+            # A renamed PII/secret validator: the sanitizer still redacts it, but the pin needs a look first (#243).
+            row["status"] = f"{UNKNOWN_VALIDATOR}: {', '.join(sorted(unknown))}"
+            return None, row
         rec = new_record(old, evaluator, stamp, attempts, report)
         if report is not None:
             pub = out_dir / rec["report_dir"]
@@ -159,6 +167,10 @@ def main(image: str, out_dir: Path, limit: int | None = None) -> int:
         )
     (out_dir / "rescan.md").write_text("\n".join(lines) + "\n")
     print("\n".join(lines[:3]))
+    refused = [r for r in rows if str(r.get("status", "")).startswith(UNKNOWN_VALIDATOR)]
+    if refused:
+        print(f"{len(refused)} skill(s) {refused[0]['status']}; add it to SCANNER_VALIDATORS", file=sys.stderr)
+        return 1
     return 0
 
 

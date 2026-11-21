@@ -85,3 +85,50 @@ def test_titles_rules_and_locations_are_kept():
 def test_sanitizing_twice_changes_nothing():
     once = ev.sanitize_report(synthetic_report())
     assert ev.sanitize_report(once) == once
+
+
+def renamed_scanner_result():
+    """A future SkillEvaluator that renames Secrets Detection and adds a field quoting the match (#243)."""
+    secret = f"Possible API key: {TOKEN}"
+    return {
+        "validator": "Credential Scan",
+        "summary_line": f"found {TOKEN}",
+        "findings": [{"category": "SECRET", "message": secret, "raw_hit": TOKEN}],
+        "legacy": {"errors": [f"[SECRET-CRITICAL] {secret} in run.sh:3"]},
+    }
+
+
+def test_a_renamed_scanner_validator_is_still_redacted():
+    report = {"results": [renamed_scanner_result()]}
+    assert TOKEN not in json.dumps(ev.sanitize_report(report))
+    no_category = {"results": [{**renamed_scanner_result(), "findings": [{"message": "hit", "raw_hit": TOKEN}]}]}
+    assert TOKEN not in json.dumps(ev.sanitize_report(no_category))  # the legacy tag alone is enough
+
+
+def test_a_renamed_scanner_validator_is_named():
+    report = synthetic_report()
+    assert ev.unknown_scanner_validators(report) == set()
+    report["results"].append(renamed_scanner_result())
+    assert ev.unknown_scanner_validators(report) == {"Credential Scan"}
+
+
+def shipped_reports():
+    import tarfile
+
+    bundle = Path(__file__).resolve().parents[1] / "catalog" / "public-reports.tar.gz"
+    with tarfile.open(bundle) as t:
+        for m in t.getmembers():
+            if m.isfile() and m.name.endswith("/report.public.json"):
+                yield m.name, json.load(t.extractfile(m))
+
+
+def test_the_pinned_engines_scanner_validators_are_all_listed():
+    """Every validator that reports PII or secret findings in the shipped catalog is one the sanitizer names, so a
+    repin that renames one shows up here, and in catalog-rescan, before its reports are published."""
+    unknown = {name: v for name, rep in shipped_reports() if (v := ev.unknown_scanner_validators(rep))}
+    assert unknown == {}
+
+
+def test_the_shipped_reports_are_unchanged_by_the_stricter_check():
+    changed = [name for name, rep in shipped_reports() if ev.sanitize_report(rep) != rep]
+    assert changed == []

@@ -68,3 +68,34 @@ def test_unpack_reads_the_log_and_skips_unsafe_members(tmp_path):
     got = sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file() or p.is_symlink())
     assert got == ["reports/a/report.public.json", "results.jsonl"]
     assert not (tmp_path / "escape").exists()
+
+
+def test_a_renamed_scanner_validator_fails_the_rescan(tmp_path, monkeypatch):
+    """#243: a report with secret findings under an unlisted validator gets no record, and the job exits non-zero."""
+    import json
+
+    report = {
+        "quality_summary": [{"overall_score": 80}],
+        "results": [{"validator": "Credential Scan", "legacy": {"errors": ["[SECRET-HIGH] key: x in a.sh:1"]}}],
+    }
+    repo = tmp_path / "repo"
+    (repo / "s" / "a").mkdir(parents=True)
+    (repo / "s" / "a" / "SKILL.md").write_text("---\nname: a\n---\n")
+
+    def fake_scan(image, skill, reports):
+        reports.mkdir(parents=True)
+        (reports / "skillevaluator-tier1.json").write_text(json.dumps(report))
+        return 0, 1.0
+
+    old = rec("s/a", "1")
+    monkeypatch.setattr(cr, "image_version", lambda image: "9.9.9")
+    monkeypatch.setattr(cr.ev, "load_results", lambda: [old])
+    monkeypatch.setattr(cr.ev, "checkout", lambda repo_name, commit: (repo, None))
+    monkeypatch.setattr(cr.ev, "tree_digest", lambda path: old["source"]["tree_digest"])
+    monkeypatch.setattr(cr.par, "scan", fake_scan)
+    out = tmp_path / "out"
+    assert cr.main("img@sha256:00", out) == 1
+    assert (out / "results.jsonl").read_text() == ""
+    assert not (out / "reports").exists()
+    row = json.loads((out / "rescan.json").read_text())["rows"][0]
+    assert row["status"] == f"{cr.UNKNOWN_VALIDATOR}: Credential Scan"
