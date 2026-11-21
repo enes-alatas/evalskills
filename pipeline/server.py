@@ -351,53 +351,55 @@ def worker():
             prune_clones()
         except Exception:  # noqa: BLE001 -- pruning must never stop the queue
             traceback.print_exc()
-        while True:
-            with db() as c:
-                job = c.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
-                if not job:
-                    break
-                s = c.execute("SELECT * FROM skills WHERE id=?", (job["skill_id"],)).fetchone()
+        while process_next():
+            pass
 
-            # The job stays queued until the scan really starts: for the sidecar, when the scanner claims it (#103).
-            def started(jid=job["id"]):
-                with db() as c:
-                    c.execute(
-                        "UPDATE jobs SET status='running', started_at=?, note=NULL WHERE id=?", (time.time(), jid)
-                    )
 
-            status, eid, note = "failed", None, None
-            try:
-                rec = ev.evaluate(s["repo"], s["path"], s["category"], on_start=started)
-                eid = rec["id"]
-                status = rec["status"]
-                if rec.get("_cached"):
-                    note = "Unchanged since last evaluation (same skill content and evaluator); reused result."
-                elif status == "failed":
-                    note = rec.get("error")
-                with db() as c:
-                    add_record(c, rec, s["category"])
-            except ev.LowDisk as e:
-                # Nothing ran: no result, no score. The job says why, and a later resubmission runs normally (#168).
-                note = f"Not evaluated: the server is low on disk space ({e}). Please try again later."
-                print(f"evaluation refused, low disk: {e}", file=sys.stderr)
-            except ev.ScannerUnavailable:
-                # Not a result: the job stays queued and says why, and is offered again after a pause (#65, #103).
-                with db() as c:
-                    c.execute(
-                        "UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (WAITING_NOTE, job["id"])
-                    )
-                time.sleep(SCANNER_RETRY_S)
-                break
-            except ValueError as e:
-                status, note = "unsupported", str(e)
-            except Exception as e:  # noqa: BLE001
-                note = f"{type(e).__name__}: {e}"[:300]
-                traceback.print_exc()
-            with db() as c:
-                c.execute(
-                    "UPDATE jobs SET status=?, finished_at=?, evaluation_id=?, note=? WHERE id=?",
-                    (status, time.time(), eid, note, job["id"]),
-                )
+def process_next() -> bool:
+    """Run the oldest queued job, if there is one. → whether to look for another straight away."""
+    with db() as c:
+        job = c.execute("SELECT * FROM jobs WHERE status='queued' ORDER BY id LIMIT 1").fetchone()
+        if not job:
+            return False
+        s = c.execute("SELECT * FROM skills WHERE id=?", (job["skill_id"],)).fetchone()
+
+    # The job stays queued until the scan really starts: for the sidecar, when the scanner claims it (#103).
+    def started(jid=job["id"]):
+        with db() as c:
+            c.execute("UPDATE jobs SET status='running', started_at=?, note=NULL WHERE id=?", (time.time(), jid))
+
+    status, eid, note = "failed", None, None
+    try:
+        rec = ev.evaluate(s["repo"], s["path"], s["category"], on_start=started)
+        eid = rec["id"]
+        status = rec["status"]
+        if rec.get("_cached"):
+            note = "Unchanged since last evaluation (same skill content and evaluator); reused result."
+        elif status == "failed":
+            note = rec.get("error")
+        with db() as c:
+            add_record(c, rec, s["category"])
+    except ev.LowDisk as e:
+        # Nothing ran: no result, no score. The job says why, and a later resubmission runs normally (#168).
+        note = f"Not evaluated: the server is low on disk space ({e}). Please try again later."
+        print(f"evaluation refused, low disk: {e}", file=sys.stderr)
+    except ev.ScannerUnavailable:
+        # Not a result: the job stays queued and says why, and is offered again after a pause (#65, #103).
+        with db() as c:
+            c.execute("UPDATE jobs SET status='queued', started_at=NULL, note=? WHERE id=?", (WAITING_NOTE, job["id"]))
+        time.sleep(SCANNER_RETRY_S)
+        return False
+    except ValueError as e:
+        status, note = "unsupported", str(e)
+    except Exception as e:  # noqa: BLE001
+        note = f"{type(e).__name__}: {e}"[:300]
+        traceback.print_exc()
+    with db() as c:
+        c.execute(
+            "UPDATE jobs SET status=?, finished_at=?, evaluation_id=?, note=? WHERE id=?",
+            (status, time.time(), eid, note, job["id"]),
+        )
+    return True
 
 
 # ---------------------------------------------------------------- HTTP
