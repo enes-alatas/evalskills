@@ -750,6 +750,26 @@ ROUTES = [
 ROUTES = [(m, re.compile(p + r"\Z"), k, a) for m, p, k, a in ROUTES]
 
 
+PLAIN_WORD = re.compile(r"[a-z_]{1,32}\Z")
+
+
+def shown_path(path: str) -> str:
+    """A request path as the log and a refusal show it (#229): the API version and the route's fixed words stay, so a
+    refusal names its route. A known route's ID, name or image reference is blanked. In a path the proxy doesn't know,
+    any part that isn't a plain lowercase word is blanked. Never reads the query or the body."""
+    m = VERSION.match(path)
+    bare = m.group(1) if m else path
+    prefix = path[: len(path) - len(bare)]
+    for _meth, rx, _kind, _action in ROUTES:
+        hit = rx.match(bare)
+        if hit:
+            if hit.groups() and hit.group(1) is not None:
+                bare = bare[: hit.start(1)] + "…" + bare[hit.end(1) :]
+            return (prefix + bare)[:80]
+    parts = bare.split("/")
+    return (prefix + "/".join(p if not p or PLAIN_WORD.match(p) else "…" for p in parts))[:80]
+
+
 def route(method: str, path: str):
     """→ (action, kind, captured id, route path). Versioned paths (/v1.47/...) match like unversioned ones."""
     if "%" in path or "/../" in path + "/" or "/./" in path + "/" or "//" in path:
@@ -760,7 +780,7 @@ def route(method: str, path: str):
         hit = rx.match(bare)
         if hit and meth == method:
             return action, kind, (hit.group(1) if hit.groups() else None), bare
-    raise Refused(f"{method} {re.sub(ID, '…', bare)[:80]} is not allowed")
+    raise Refused(f"{method} {shown_path(path)} is not allowed")
 
 
 # ---------------------------------------------------------------- HTTP plumbing
@@ -1046,7 +1066,7 @@ class Handler(socketserver.BaseRequestHandler):
         try:
             up.settimeout(60)
             up.connect(self.cfg["upstream"])
-            log("forward", method=head.method, route=re.sub(ID, "…", bare)[:80])
+            log("forward", method=head.method, route=shown_path(target.split("?", 1)[0]))
             length = len(body) if body is not None else (None if stream else 0)
             up.sendall(upstream_head(head.method, target, head, hijack=hijack, length=length, chunked=stream))
             if body:
