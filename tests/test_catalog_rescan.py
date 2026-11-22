@@ -99,3 +99,34 @@ def test_a_renamed_scanner_validator_fails_the_rescan(tmp_path, monkeypatch):
     assert not (out / "reports").exists()
     row = json.loads((out / "rescan.json").read_text())["rows"][0]
     assert row["status"] == f"{cr.UNKNOWN_VALIDATOR}: Credential Scan"
+
+
+def test_a_pr_sample_is_fixed_and_spans_repositories():
+    """#233: n skills from n different repositories, the same ones every time, whatever order the records come in."""
+    import random
+
+    rows = []
+    for repo in ("a/one", "b/two", "c/three", "d/four", "e/five", "f/six", "g/seven"):
+        for path in ("skills/z", "skills/b", "skills/m"):
+            rows.append({**rec(path, "1"), "source": {**rec(path, "1")["source"], "repo": repo}})
+    got = cr.sample(rows, 5)
+    assert [(r["source"]["repo"], r["source"]["skill_path"]) for r in got] == [
+        ("a/one", "skills/b"),
+        ("b/two", "skills/b"),
+        ("c/three", "skills/b"),
+        ("e/five", "skills/b"),
+        ("f/six", "skills/b"),
+    ]
+    shuffled = rows[:]
+    random.Random(7).shuffle(shuffled)
+    assert cr.sample(shuffled, 5) == got
+    assert len(cr.sample(rows, 50)) == 7  # never more than one per repository
+    assert cr.sample([], 5) == []
+
+
+def test_the_shipped_catalog_sample_is_five_repositories():
+    import json
+
+    lines = (Path(__file__).resolve().parents[1] / "catalog" / "results.jsonl").read_text().splitlines()
+    got = cr.sample(cr.latest_per_skill([json.loads(x) for x in lines if x.strip()]), 5)
+    assert len({r["source"]["repo"] for r in got}) == 5

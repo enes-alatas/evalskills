@@ -1,6 +1,8 @@
-# Re-scans every catalog skill, at its recorded commit, through the digest-pinned Tier 1 image (#110). The new records
-# and sanitized reports are printed into the log (scripts/rescan_unpack.py reads them back); a PR commits them after
-# review. Public repositories are cloned read-only; the image runs with no network. Read-only token, no secrets.
+# Re-scans catalog skills, at their recorded commits, through the digest-pinned Tier 1 image (#110). On a pull request
+# it scans a fixed sample of 5 skills from 5 repositories, which tests the script in minutes (#233). By hand
+# (workflow_dispatch) it re-scans every catalog skill: that is the run whose output a PR commits, as for a repin. The new
+# records and sanitized reports are printed into the log (scripts/rescan_unpack.py reads them back). Public
+# repositories are cloned read-only; the image runs with no network. Read-only token, no secrets.
 name: catalog-rescan
 
 on:
@@ -31,7 +33,9 @@ jobs:
           docker --config "$RUNNER_TEMP/anon" pull -q "$IMAGE"
       - name: re-scan
         run: |
-          python3 -I scripts/catalog_rescan.py "$IMAGE" "$RUNNER_TEMP/rescan"
+          sample=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then sample=(--sample 5); fi
+          python3 -I scripts/catalog_rescan.py "$IMAGE" "$RUNNER_TEMP/rescan" "${sample[@]}"
           head -c 900000 "$RUNNER_TEMP/rescan/rescan.md" >> "$GITHUB_STEP_SUMMARY"
       # The output is printed into the run's log, between markers, as a base64 tarball: the operator's egress allows
       # log downloads, not artifact storage (#110). It holds only sanitized reports and summary records.
