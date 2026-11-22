@@ -60,10 +60,24 @@ post() {
 }
 said() { echo "HTTP ${CODE:-none}: $(head -c 2000 <<<"$BODY")"; }
 
+# GitHub rate-limits CI's unauthenticated lookups (60 an hour per runner). That answer says nothing about our code,
+# so the end-to-end part is skipped, and says so, rather than failing (#161; Enes, 2026-11-22). It is never a pass:
+# the job summary and a warning name what wasn't tested. Any other answer is checked as before.
+RATE_LIMITED="GitHub is rate-limiting this server; please try again later"
+skip_if_rate_limited() {
+  [ "$CODE" = 400 ] && [ "$(jq -r '.error // ""' <<<"$BODY" 2>/dev/null)" = "$RATE_LIMITED" ] || return 0
+  local msg="deploy smoke skipped: rate-limited. GitHub refused the $1 lookup, so discover, submit and the scan were not tested. Boot, seeding and isolation passed."
+  echo "::warning::$msg"
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && echo "**$msg**" >>"$GITHUB_STEP_SUMMARY"
+  exit 0
+}
+
 post /api/discover "{\"url\": \"https://github.com/$REPO\"}"
+skip_if_rate_limited discover
 jq -e --arg p "$SKILL" '.skills | map(.path) | index($p) != null' <<<"$BODY" >/dev/null 2>&1 ||
   fail "discover did not list $SKILL; $(said)"
 post /api/submit "{\"repo\": \"$REPO\", \"paths\": [\"$SKILL\"]}"
+skip_if_rate_limited submit
 jq -e '.submitted[0].job != null' <<<"$BODY" >/dev/null 2>&1 || fail "submit did not queue a job; $(said)"
 
 id=$(jq -rn --arg s "$REPO:$SKILL" '$s | @uri')
