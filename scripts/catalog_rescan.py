@@ -8,7 +8,8 @@ contained command as scripts/engine_parity.py, so only the engine changes. It wr
   reports/<slug>/<run>/report.public.json   the sanitized report; the raw report and logs are never written here
   rescan.json, rescan.md            per skill: old and new summary fields and the checks that changed
 
-Usage: python3 -I scripts/catalog_rescan.py IMAGE OUT_DIR [LIMIT]   (needs git and Docker; no secrets)
+Usage: python3 -I scripts/catalog_rescan.py IMAGE OUT_DIR [LIMIT] [--sample N]   (needs git and Docker; no secrets)
+  --sample N   a fixed sample of N skills from N different repositories, as a pull request's check does (#233)
 """
 
 import datetime as dt
@@ -35,6 +36,18 @@ def latest_per_skill(results: list[dict]) -> list[dict]:
         if key not in out or r["started_at"] > out[key]["started_at"]:
             out[key] = r
     return sorted(out.values(), key=lambda r: (r["source"]["repo"], r["source"]["skill_path"]))
+
+
+def sample(records: list[dict], n: int) -> list[dict]:
+    """A fixed sample for a PR's check (#233): n skills, each from a different repository, spread evenly over the
+    repositories in name order, and the first skill by path in each. The same catalog always gives the same sample."""
+    by_repo: dict[str, list[dict]] = {}
+    for r in records:
+        by_repo.setdefault(r["source"]["repo"], []).append(r)
+    repos = sorted(by_repo)
+    n = min(n, len(repos))
+    picked = [repos[i * len(repos) // n] for i in range(n)] if n else []
+    return [min(by_repo[repo], key=lambda r: r["source"]["skill_path"]) for repo in picked]
 
 
 def image_version(image: str) -> str | None:
@@ -124,13 +137,14 @@ def rescan(image: str, old: dict, evaluator: dict, out_dir: Path) -> tuple[dict 
         shutil.rmtree(work, ignore_errors=True)
 
 
-def main(image: str, out_dir: Path, limit: int | None = None) -> int:
+def main(image: str, out_dir: Path, limit: int | None = None, sample_size: int | None = None) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     evaluator = {"version": image_version(image), "commit": None, "image": image}
     if not evaluator["version"]:
         print("the image did not report a SkillEvaluator version", file=sys.stderr)
         return 1
-    todo = latest_per_skill(ev.load_results())[:limit]
+    todo = latest_per_skill(ev.load_results())
+    todo = sample(todo, sample_size) if sample_size else todo[:limit]
     records, rows = [], []
     for old in todo:
         try:
@@ -175,4 +189,9 @@ def main(image: str, out_dir: Path, limit: int | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1], Path(sys.argv[2]), int(sys.argv[3]) if len(sys.argv) > 3 else None))
+    args, size = sys.argv[1:], None
+    if "--sample" in args:
+        i = args.index("--sample")
+        size = int(args[i + 1])
+        del args[i : i + 2]
+    sys.exit(main(args[0], Path(args[1]), int(args[2]) if len(args) > 2 else None, size))
