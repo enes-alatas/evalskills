@@ -66,11 +66,12 @@ jobs:
           printf 'FROM python:3.12-slim\nRUN apt-get update -q && apt-get install -y -q iproute2\nCOPY router.py /router.py\n' \
             > "$RUNNER_TEMP/router/Dockerfile"
           docker build -q -t "$ROUTER" "$RUNNER_TEMP/router"
-          # deploy/live/compose.yaml as on the host, with an obviously synthetic key file (no model is ever called)
+          # deploy/live/compose.yaml as on the host, with an obviously synthetic key env file (no model is ever called)
           sudo install -d -m 0700 /etc/evalskills/secrets
-          echo "ci-synthetic-not-a-key" | sudo tee /etc/evalskills/secrets/model_key > /dev/null
-          sudo chown 10002:10002 /etc/evalskills/secrets/model_key && sudo chmod 0400 /etc/evalskills/secrets/model_key
-          sudo EVALSKILLS_HOST_ADDRS="$(sh deploy/live/host-addrs.sh)" docker compose -f deploy/live/compose.yaml up -d --build --wait
+          echo "GATEWAY_MODEL_KEY=ci-synthetic-not-a-key" | sudo tee /etc/evalskills/secrets/gateway.env > /dev/null
+          sudo chmod 0600 /etc/evalskills/secrets/gateway.env
+          sudo EVALSKILLS_HOST_ADDRS="$(sh deploy/live/host-addrs.sh)" docker compose \
+            --env-file /etc/evalskills/secrets/gateway.env -f deploy/live/compose.yaml up -d --build --wait
           nohup python3 -m http.server --bind 0.0.0.0 9999 >/dev/null 2>&1 &  # a host service no trial may reach
           sleep 2
           # control: the host side reaches the gateway at its egress address (step 3's /etc/hosts line points there)

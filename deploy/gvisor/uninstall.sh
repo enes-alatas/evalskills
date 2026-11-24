@@ -34,7 +34,7 @@ if [ -n "$mounted" ]; then
   exit 1
 fi
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx evalskills-gateway; then
-  echo "note: deploy/live is up and listens on br-evals; stop it first: docker compose -f deploy/live/compose.yaml down" >&2
+  echo "note: deploy/live is up and listens on br-evals; stop it first: GATEWAY_MODEL_KEY='' docker compose -f deploy/live/compose.yaml down" >&2
   exit 1
 fi
 

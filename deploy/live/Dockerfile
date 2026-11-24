@@ -1,5 +1,5 @@
 # The model gateway and the trial egress proxy (#121, #123): one image, two services, standard library only.
-# Build: docker compose -f deploy/live/compose.yaml build
+# Build: GATEWAY_MODEL_KEY='' docker compose -f deploy/live/compose.yaml build
 # By digest, the same as deploy/Dockerfile's, so a rebuild can't change the base image without a commit; Dependabot
 # proposes the bumps (#183).
 FROM python:3.13-slim@sha256:e48f59cdba69a3cbd9ed2cf0f348d90d45a8d350d98134cf1070bc106ee9ed90

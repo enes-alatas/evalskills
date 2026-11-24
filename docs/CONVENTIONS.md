@@ -57,8 +57,9 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
   words.
 
 ## Secrets and evidence
-- Secrets live only on the hosts: one container per secret, delivered as a mounted file where possible. Never in the
-  repo, CI, images or chat. CI holds no secrets.
+- Secrets live only on the hosts: one container per secret, as an env var the host sets for that container, which the
+  process takes out of its environment at start and never passes to a child (ADR-0008). Never in the repo, CI, images
+  or chat. CI holds no secrets.
 - Never put a secret in code, logs, API responses, fixtures, issues, PRs, reviews, commits, attachments or chat.
   Quote a credential as at most eight characters after its structural prefix, then `…` (`ghp_abcd…`).
 - Fixtures are synthetic (`sk-test-0000-not-a-real-key`). Screenshots come from the fixture catalog, never from a

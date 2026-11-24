@@ -377,7 +377,7 @@ def test_docker_client_config_points_at_the_egress_proxy_and_is_roots(host):
 
 def live_ready(host, ps: str) -> None:
     (host["prefix"] / "etc/evalskills/secrets").mkdir(parents=True)
-    (host["prefix"] / "etc/evalskills/secrets/model_key").touch()
+    (host["prefix"] / "etc/evalskills/secrets/gateway.env").touch()
     (host["prefix"] / "opt/evalskills/deploy/live").mkdir(parents=True)
     (host["prefix"] / "opt/evalskills/deploy/live/compose.yaml").touch()
     for container, name in LIVE_CONFIGS:
@@ -392,9 +392,10 @@ def live_ready(host, ps: str) -> None:
 
 def test_live_step_refuses_without_the_model_key(host):
     live_ready(host, "")
-    (host["prefix"] / "etc/evalskills/secrets/model_key").unlink()
+    (host["prefix"] / "etc/evalskills/secrets/gateway.env").unlink()
+    (host["prefix"] / "etc/evalskills/secrets/model_key").touch()  # the pre-#218 file no longer counts
     p, calls = host["run"]("9-live.sh", "--yes", check=False)
-    assert p.returncode == 1 and "no model key file" in p.stderr
+    assert p.returncode == 1 and "no model key env file" in p.stderr
     assert not [c for c in calls if c.startswith("docker compose")]
 
 
@@ -411,6 +412,8 @@ def test_live_step_recreates_the_gateway_and_proxy(host):
     _, calls = host["run"]("9-live.sh", "--yes")
     up = [c for c in calls if c.startswith("docker compose")]
     assert len(up) == 1 and up[0].endswith(" up -d --build --force-recreate")  # a changed mounted file applies (#234)
+    env_file = host["prefix"] / "etc/evalskills/secrets/gateway.env"
+    assert up[0].startswith(f"docker compose --env-file {env_file} -f ")  # the key's env file, never its value (#218)
     assert {c for c in calls if c.startswith("docker exec")} == {
         f"docker exec {c} cat /etc/evalskills/{n}" for c, n in LIVE_CONFIGS
     }

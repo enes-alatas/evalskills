@@ -6,19 +6,26 @@ Docker daemon, on their own network `evalskills-egress` (172.31.248.0/24), publi
 
 | Service | Port | Holds | Reaches |
 | --- | --- | --- | --- |
-| `gateway` (`gateway/gateway.py`), `172.31.248.2` | 8443 | the model key, as a compose secret | the upstream in `gateway.json` (NVIDIA Build) |
+| `gateway` (`gateway/gateway.py`), `172.31.248.2` | 8443 | the model key, as an env var the host sets for it alone (ADR-0008) | the upstream in `gateway.json` (NVIDIA Build) |
 | `egress-proxy` (`gateway/egress_proxy.py`), `172.31.248.3` | 3128 | nothing | the hostnames in `egress-proxy.json`, public addresses only |
 
 The socket proxy attaches both to each trial's network, which is internal and has no address on the host, and names
 them `evals-gateway` and `evals-proxy` in the trial. So a trial reaches these two and nothing else.
 
 ## Setup (as root, after `deploy/gvisor/host/` steps 1-8)
-1. The key. In bash, paste it at the prompt, never on a command line, and never anywhere else:
-   `install -d -m 0700 /etc/evalskills/secrets && (umask 077; read -rs K && printf '%s\n' "$K" > /etc/evalskills/secrets/model_key; unset K)`,
-   then `chown 10002:10002 /etc/evalskills/secrets/model_key && chmod 0400 /etc/evalskills/secrets/model_key`.
-   Compose mounts a file secret as-is, so the file is owned by the gateway's uid and by nobody else.
+1. The key, in an env file only root reads, outside the checkout. In bash, paste it at the prompt, never on a command
+   line, and never anywhere else:
+   `install -d -m 0700 /etc/evalskills/secrets && (umask 077; read -rs K && printf 'GATEWAY_MODEL_KEY=%s\n' "$K" > /etc/evalskills/secrets/gateway.env; unset K)`.
+   The file is root's, mode `0600`. Step 2 hands it to compose with `--env-file`, compose sets `GATEWAY_MODEL_KEY` in
+   the gateway container alone, and the gateway takes it out of its environment at start, so no child inherits it.
+   `docker inspect evalskills-gateway` still shows it, to whoever holds the host's Docker (ADR-0008, #218).
+   A host set up before #218 has it in `/etc/evalskills/secrets/model_key`. Move it once, in bash, without printing
+   it (`printf` is a builtin, so the key is on no process's command line):
+   `(umask 077; printf 'GATEWAY_MODEL_KEY=%s\n' "$(cat /etc/evalskills/secrets/model_key)" > /etc/evalskills/secrets/gateway.env) && rm /etc/evalskills/secrets/model_key`,
+   then step 2.
 2. `sh deploy/gvisor/host/9-live.sh`, then again with `--yes`, with the socket proxy stopped:
-   `docker compose up -d --build --force-recreate` on `/opt/evalskills/deploy/live/compose.yaml`.
+   `docker compose --env-file /etc/evalskills/secrets/gateway.env up -d --build --force-recreate` on
+   `/opt/evalskills/deploy/live/compose.yaml`.
    `docker logs evalskills-gateway` shows `listening`. Run it again after every `5-code.sh` that changes
    `gateway.json` or `egress-proxy.json`. Each service reads its file once, at start, and a running container keeps
    the file from before the checkout. So the step always recreates both, and fails unless each container reads the
@@ -100,4 +107,4 @@ stays silent for longer means something stalled. `TIER3_PROGRESS=0` turns this o
 - Skill code can reach the allowlisted download hosts too. A trial holds no secret, and the skills are public
   (#123, item 6).
 
-Undo: `docker compose -f deploy/live/compose.yaml down -v`, then `rm -rf /etc/evalskills/secrets`.
+Undo: `GATEWAY_MODEL_KEY='' docker compose -f deploy/live/compose.yaml down -v`, then `rm -rf /etc/evalskills/secrets`.
