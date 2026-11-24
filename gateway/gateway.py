@@ -1,4 +1,4 @@
-"""evalskills model gateway: the only process that holds the model-provider key (ADR-0004).
+"""evalskills model gateway: the only process that holds the model-provider key (ADR-0004, ADR-0008).
 
 Trials and the evaluator get a per-run token instead. The gateway checks it, allows only configured models and
 endpoints, enforces per-run and per-day caps and a global request rate, then forwards to the upstream with the real
@@ -35,11 +35,15 @@ FORWARDED = ("/v1/chat/completions", "/v1/embeddings")  # everything else is ref
 MAX_BODY = 4_000_000  # bytes per request body
 TOKEN_PREFIX = "egw-"
 
+# The model-provider key, as the host sets it for this container alone (ADR-0008, #218). Taken out of the environment
+# at import, before anything else runs, so no child process and no later reader of os.environ sees it. Every command
+# pops it, issue and usage included, since docker exec starts them with the container's environment.
+_MODEL_KEY = os.environ.pop("GATEWAY_MODEL_KEY", "").strip()
+
 DEFAULTS = {
     "listen_host": "127.0.0.1",
     "listen_port": 8443,
     "upstream_base_url": "https://integrate.api.nvidia.com/v1",
-    "key_file": "/run/secrets/model_key",
     "state_db": "/var/lib/evalskills-gateway/state.db",
     "allowed_models": [],
     "per_run_requests": 400,
@@ -475,9 +479,9 @@ def make_handler(cfg: dict, state: State, limiter: RateLimiter, key: str):
 
 
 def serve(cfg: dict) -> None:
-    key = Path(cfg["key_file"]).read_text().strip()
+    key = _MODEL_KEY
     if not key:
-        raise ConfigError("key_file is empty")
+        raise ConfigError("GATEWAY_MODEL_KEY is unset or empty: the host sets it (deploy/live/README.md, step 1)")
     state = State(cfg["state_db"])
     limiter = RateLimiter(cfg["requests_per_minute"])
     httpd = ThreadingHTTPServer((cfg["listen_host"], cfg["listen_port"]), make_handler(cfg, state, limiter, key))

@@ -26,8 +26,8 @@ system's zones are in `docs/adr/0002-three-trust-zones.md`, the sandbox in ADR-0
 
 ## 2. Secrets
 - No secret in code, CI, images, logs, API responses or fixtures. Fixtures are visibly synthetic.
-- A new secret is a host-side file mounted into one container. It is never inherited by a child process that runs
-  untrusted code.
+- A new secret is an env var the host sets for one container (ADR-0008). The process that reads it pops it from its
+  environment at start, and no child process gets it: every subprocess gets an explicit, allowlisted environment.
 - A live credential anywhere in the PR, its commits, its CI logs or its evidence is an incident:
   `.claude/skills/credential-incident/`.
 

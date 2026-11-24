@@ -25,6 +25,16 @@ lookups, and Enes decided that it, and every token from now on, is an environmen
 - The model gateway's key is still a mounted file. It moves to this rule in its own change, #218; until then
   ADR-0004's delivery rule applies to it alone.
 
+**Amendment (2026-11-24, #218): the gateway's model key follows this rule too, with no exception.** Enes chose this on
+2026-11-24, by direct message (recorded on #218). The host sets `GATEWAY_MODEL_KEY` in
+`/etc/evalskills/secrets/gateway.env` (root, `0600`), outside the checkout. `9-live.sh` hands that file to compose with
+`--env-file`, and compose requires the variable. `gateway.py` pops it at import, in every command it runs, and starts
+no child process. The mounted file is gone, and so is the `key_file` config key, so a stale `gateway.json` is refused.
+This key's leak isn't bounded the way the lookup token's is, since it spends model budget, but its exposure doesn't
+change. Whoever can read it through `docker inspect` or `/proc/1/environ` (the host's Docker, or uid 10002 in the
+container) could already read the mounted `/run/secrets/model_key`. The gateway's caps still bound what a trial can
+spend, and they never depended on how the key was delivered. The previous bullet no longer applies.
+
 ## Consequences
 - Setting or rotating a secret means editing the host's env and recreating that container; there is no live reload.
 - Code that spawns a process passes an explicit environment. A bare `subprocess.run` in zone A is a review finding.

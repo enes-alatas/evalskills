@@ -2,8 +2,10 @@
 
 import http.client
 import json
+import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -356,6 +358,8 @@ def test_issue_writes_a_private_token_file(tmp_path, capsys):
         ({"allowed_models": []}, "allowed_models"),
         ({"allowed_models": [MODEL], "per_run_tokens": 0}, "per_run_tokens"),
         ({"allowed_models": [MODEL], "per_run_token": 5}, "unknown config keys"),
+        # #218: the key comes from the host's env now; a pre-#218 gateway.json is refused, not half-applied
+        ({"allowed_models": [MODEL], "key_file": "/run/secrets/model_key"}, "unknown config keys: key_file"),
     ],
 )
 def test_config_is_strict(tmp_path, raw, why):
@@ -507,3 +511,32 @@ def test_a_clean_stream_is_still_relayed_whole(env):
     token = env["state"].issue("run-clean")
     code, data = call(env["base"], "/v1/chat/completions", token, chat(stream=True))
     assert code == 200 and b'"hi"' in data and b"[DONE]" in data and b"withheld" not in data
+
+
+def test_the_model_key_is_taken_out_of_the_environment_so_no_child_inherits_it():
+    """ADR-0008 (#218): importing gateway.py pops GATEWAY_MODEL_KEY before anything runs, in every command; a child
+    started with the default environment doesn't get it."""
+    probe = (
+        "import os, subprocess, sys; sys.path.insert(0, 'gateway'); import gateway as gw; "
+        "assert gw._MODEL_KEY == os.environ['WANT'], 'key not read'; "
+        "assert 'GATEWAY_MODEL_KEY' not in os.environ; "
+        "out = subprocess.run(['sh', '-c', 'env'], capture_output=True, text=True, check=True).stdout; "
+        "assert 'GATEWAY_MODEL_KEY' not in out, 'a child inherited it'"
+    )
+    root = Path(__file__).resolve().parents[1]
+    env = {**os.environ, "GATEWAY_MODEL_KEY": FAKE_KEY, "WANT": FAKE_KEY}
+    subprocess.run([sys.executable, "-c", probe], cwd=root, env=env, check=True, capture_output=True, timeout=60)
+
+
+def test_the_gateway_starts_no_child_process():
+    """Nothing in gateway.py could hand the key on: no subprocess, no exec, no os.system (ADR-0008)."""
+    src = (Path(gw.__file__)).read_text()
+    for call in ("subprocess", "os.system", "os.exec", "os.spawn", "os.popen", "os.fork"):
+        assert call not in src, call
+
+
+def test_serve_refuses_without_a_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(gw, "_MODEL_KEY", "")  # compose's ${…?} lets an empty value through; the gateway doesn't
+    cfg = {**gw.DEFAULTS, "allowed_models": [MODEL], "state_db": str(tmp_path / "s.db"), "listen_port": 0}
+    with pytest.raises(gw.ConfigError, match="GATEWAY_MODEL_KEY is unset or empty"):
+        gw.serve(cfg)

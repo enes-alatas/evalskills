@@ -52,10 +52,15 @@ def test_services_sit_where_the_socket_proxy_and_the_host_look_for_them():
 
 
 def test_only_the_gateway_gets_the_key():
-    assert "secrets: [model_key]" in service("gateway")
-    assert "secret" not in service("egress-proxy")
-    assert gw.load_config(str(LIVE / "gateway.json"))["key_file"] == "/run/secrets/model_key"
-    assert not re.search(r"API_KEY|nvapi-|environment:", COMPOSE)  # the key is a file, never an env var (ADR-0004)
+    # ADR-0008 (#218): a host-set env var, required by compose, for the gateway alone; no mounted file any more
+    assert re.search(
+        r"\n    environment:\n      GATEWAY_MODEL_KEY: \$\{GATEWAY_MODEL_KEY\?[^}]+\}\n", service("gateway")
+    )
+    assert COMPOSE.count("GATEWAY_MODEL_KEY: ") == 1
+    assert "environment:" not in service("egress-proxy") and "secret" not in service("egress-proxy")
+    assert "secrets:" not in COMPOSE and "/run/secrets" not in COMPOSE
+    assert "key_file" not in gw.load_config(str(LIVE / "gateway.json"))
+    assert not re.search(r"API_KEY|nvapi-", COMPOSE)  # the value itself is never in the repo
 
 
 def test_both_services_are_hardened():

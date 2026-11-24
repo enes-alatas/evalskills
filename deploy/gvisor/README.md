@@ -50,7 +50,7 @@ and its `-undo.sh` removes only what that step added. Step 4 only reads, so it h
 | 6 | `6-base-image.sh DIR` | Checks the CI artifact in `DIR` (first check the run on GitHub, as `build/README.md` says): `"loadable": true`, `"pinned": "committed"`, the tarball's sha256. Then `docker load`, and prints this host's image ID | `6-base-image-undo.sh`: `docker image rm` (no `-f`) |
 | 7 | `7-docker-proxy.sh` | `/etc/evals/docker-proxy.json` (root 0640) from `host/docker-proxy.json`, with `builds.base_image_id` set to this host's ID of the base image; `evalskills-docker-proxy.service`. **Not enabled, not started** | `7-docker-proxy-undo.sh`: stops it, removes the unit and the config |
 | 8 | `8-docker-client.sh` | `/var/lib/evals/.docker/config.json` (root 0644): `proxies` to `evals-proxy:3128`, so Docker sets `HTTP(S)_PROXY` in every trial container | `8-docker-client-undo.sh`: deletes it |
-| 9 | `9-live.sh` | The gateway and the egress proxy (`deploy/live/compose.yaml`) on `evalskills-egress`. The model key goes in first, by hand (`deploy/live/README.md`, step 1); the script never reads it | `9-live-undo.sh`: `docker compose down` (volumes kept); refuses while the proxy runs |
+| 9 | `9-live.sh` | The gateway and the egress proxy (`deploy/live/compose.yaml`) on `evalskills-egress`. The model key's env file goes in first, by hand (`deploy/live/README.md`, step 1); the script passes it to compose with `--env-file` and never reads it | `9-live-undo.sh`: `docker compose down` (volumes kept); refuses while the proxy runs |
 
 A rerun of step 6 then step 7 re-pins a reloaded base image.
 
@@ -120,7 +120,7 @@ The first real trial is a separate step, with Enes's go-ahead. Keen wants the pr
 The first design (a second dockerd, `docker-evals`) is withdrawn: on 2026-11-12 starting it took the main daemon's
 networks down twice. Two dockerds in one network namespace aren't safe, whatever the config. Its install files are
 gone from this folder. Where it was installed, the host's operator removes it in one announced step, as root:
-1. `docker compose -f deploy/live/compose.yaml down`, if the gateway and proxy still listen on `br-evals`.
+1. `GATEWAY_MODEL_KEY='' docker compose -f deploy/live/compose.yaml down`, if the gateway and proxy still listen on `br-evals`.
 2. `sh deploy/gvisor/uninstall.sh`: a dry run that lists everything it will touch. Then `sh deploy/gvisor/uninstall.sh
    --yes`. It removes the unit, the EVALS rules (only those scoped to 172.31.240.0/20), `br-evals`, the eval
    daemon's directories and its group. It reports `dockremap` but doesn't remove it, and refuses while docker-evals

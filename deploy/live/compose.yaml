@@ -29,7 +29,10 @@ services:
     volumes:
       - ./gateway.json:/etc/evalskills/gateway.json:ro
       - gateway-state:/var/lib/evalskills-gateway   # caps and counters survive restarts
-    secrets: [model_key]                    # the only place the model key exists (ADR-0004)
+    # The only container that gets the model key (ADR-0008, #218). 9-live.sh reads it from the host's
+    # /etc/evalskills/secrets/gateway.env with --env-file; gateway.py takes it out of its environment at start.
+    environment:
+      GATEWAY_MODEL_KEY: ${GATEWAY_MODEL_KEY?set GATEWAY_MODEL_KEY on the host (deploy/live/README.md, step 1)}
 
   egress-proxy:
     <<: *hardening
@@ -53,10 +56,6 @@ networks:
     name: evalskills-egress
     driver: bridge
     ipam: { config: [{ subnet: 172.31.248.0/24, gateway: 172.31.248.1 }] }
-
-secrets:
-  model_key:
-    file: /etc/evalskills/secrets/model_key  # on the host: owner 10002, mode 0400 (see README)
 
 volumes:
   gateway-state:
