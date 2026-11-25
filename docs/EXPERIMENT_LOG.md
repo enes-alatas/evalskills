@@ -236,3 +236,25 @@
 - -> Scores across the catalog went up 1.7 points, but the gap between skills didn't change. Don't compare a
   score from before 2026-11-20 with one after: each result names the engine it came from. Skills that already
   declared a version lost their 5-point lead on that rule.
+
+## E14 — live pilot runs 9 and 10: the gateway path, then a retired model (2026-11-20 to 2026-11-25, #121, #240, #252)
+- Setup as E12: one skill, OpenCode on NVIDIA Build through the gateway, under gVisor on the shared host, egress open.
+  Enes ran every host step.
+- **Run 9:** recorded `failed`, with no score. OpenCode called `/v1/responses`, which the gateway doesn't forward. In
+  gVisor mode, our runner didn't name SkillEvaluator's gateway-aware OpenCode, so the trial got Harbor's stock agent
+  (#240, fixed by #241).
+- **Run 10** started 17:23 UTC on 2026-11-20 with #241 in place. The gateway now forwarded the agent's calls, but
+  from 17:41 NVIDIA answered every call with `410 Gone`. On 2026-11-25 the 410 body read: the model
+  `nvidia/nemotron-3-super-120b-a12b` "has reached its end of life on 2026-10-03T09:00:00Z and is no longer
+  available". NVIDIA's model list no longer has it. So it served calls for seven weeks after that date, then
+  stopped mid-run. Run 10's record hasn't been reviewed. Whatever status the runner wrote stands, and no score from it
+  is used.
+- **The replacement** is Enes's choice (#252): `nvidia/nemotron-3.5-super-vl-120b-a12b`, the listed successor, the same
+  size by its name (120B, 12B active). One check on 2026-11-25 showed it returns OpenAI-style `tool_calls`. It is a
+  reasoning model: on that check it spent its first 50 output tokens reasoning before it called the tool, so its
+  reasoning counts against the gateway's `max_output_tokens` (4096). Its answers name the served model as
+  `private/nvidia/nemotron-3.5-super-120b-a12b`. Each pilot record keeps the ID we requested.
+- -> Runs 1 to 9 all failed with no score, and run 10 lost the model partway through, so there's no result on the
+  retired model to compare with. From run 11 on,
+  the pilot's agent and judge model is the 3.5 one. A provider can retire a model without warning, so each live result
+  is tied to the model it names (METHODOLOGY, live tier).

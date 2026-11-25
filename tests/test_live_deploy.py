@@ -100,3 +100,12 @@ def test_proxy_serves_the_trial_range_only():
     assert clients == [ipaddress.ip_network(dp.DEFAULTS["network_pool"])]  # the trial networks, not the egress one
     app = re.search(r"EVALSKILLS_SUBNET:-([\d./]+)", (ROOT / "deploy" / "compose.yaml").read_text()).group(1)
     assert not any(ipaddress.ip_network(app).overlaps(c) for c in clients)  # the public app never gets the proxy
+
+
+def test_the_documented_pilot_model_is_the_one_the_gateway_allows():
+    """#252: NVIDIA retired the first pilot model; every place that names the model must move together."""
+    allowed = gw.load_config(str(LIVE / "gateway.json"))["allowed_models"]
+    assert gw.load_config(str(ROOT / "gateway" / "config.example.json"))["allowed_models"] == allowed
+    for doc in (LIVE / "README.md", ROOT / "pipeline" / "live_pilot.py"):
+        named = set(re.findall(r"(?:TIER3_AGENT_MODEL|SKILL_EVAL_LLM_MODEL)=(\S+)", doc.read_text()))
+        assert named and named <= set(allowed), doc

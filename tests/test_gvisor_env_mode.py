@@ -61,15 +61,17 @@ def test_opencode_goes_through_the_gateway_wrapper_on_chat_completions(monkeypat
     assert import_symbol(g.SPEC.agent_import_paths["opencode"]) is SkillEvaluatorGatewayOpenCode
     provider = ProviderConfig(
         provider="openai-compatible",
-        model="nvidia/nemotron-3-super-120b-a12b",
+        model="nvidia/nemotron-3.5-super-vl-120b-a12b",
         api_key="synthetic-not-a-key",
         base_url="http://evals-gateway:8443/v1",
-        litellm_model="openai/nvidia/nemotron-3-super-120b-a12b",
+        litellm_model="openai/nvidia/nemotron-3.5-super-vl-120b-a12b",
     )
     assert runner._agent_import_path(provider, "opencode", "gvisor") == g.GATEWAY_OPENCODE
     monkeypatch.setenv("OPENAI_BASE_URL", "http://evals-gateway:8443/v1")
-    agent = SkillEvaluatorGatewayOpenCode(logs_dir=Path("/tmp"), model_name="openai/nvidia/nemotron-3-super-120b-a12b")
-    assert agent.model_name == "skillevaluator-gateway/nvidia/nemotron-3-super-120b-a12b"  # the gateway's model ID
+    agent = SkillEvaluatorGatewayOpenCode(
+        logs_dir=Path("/tmp"), model_name="openai/nvidia/nemotron-3.5-super-vl-120b-a12b"
+    )
+    assert agent.model_name == "skillevaluator-gateway/nvidia/nemotron-3.5-super-vl-120b-a12b"  # the gateway's model ID
     provider_cfg = agent._opencode_config["provider"]["skillevaluator-gateway"]
     assert provider_cfg["npm"] == "@ai-sdk/openai-compatible"
     assert provider_cfg["options"]["baseURL"] == "http://evals-gateway:8443/v1"
