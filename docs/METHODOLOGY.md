@@ -62,7 +62,9 @@ running proxy before each run. A tier beyond the pilot goes back to a short allo
 2026-11-20).
 
 A funded tier would keep one fixed agent and model per live column, so its scores are comparable only within that
-column. Models are never mixed into one score. The sponsor is named next to every result it paid for, and has no
+column. Models are never mixed into one score. A provider can retire a model, as NVIDIA did with the pilot's
+first one (E14). A result keeps the model it ran on, and a column whose model is retired starts over on its successor;
+old and new results aren't compared or merged. The sponsor is named next to every result it paid for, and has no
 say over which skills run or how they are scored. Costs and terms: `docs/SPONSORSHIP.md`.
 
 Live runs use SkillEvaluator's own content for each skill (ADR-0006): the test cases the skill publishes in its
