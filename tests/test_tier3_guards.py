@@ -231,3 +231,66 @@ def test_refuses_a_trial_while_the_root_disk_is_low(tmp_path, monkeypatch):
 
 def test_the_default_minimum_is_8_gb():
     assert tier3.MIN_FREE_ROOT == 8 * 1024**3 or "TIER3_MIN_FREE_ROOT" in os.environ
+
+
+def test_a_smoke_run_keeps_only_the_first_shared_case(tmp_path):
+    """#257: --smoke runs the shared set's first case, from the real vendored set."""
+    out = tier3.prepare(skill(tmp_path), "quixbugs-python", tmp_path / "out" / "demo", max_cases=1)
+    full = json.loads((tier3.SHARED / "quixbugs-python" / "evals.json").read_text())["evals"]
+    kept = json.loads((out / "evals" / "evals.json").read_text())["evals"]
+    assert len(full) > 1 and kept == [full[0] | {"expected_skill": "demo"}]
+
+
+def test_a_smoke_run_keeps_only_the_first_own_case(tmp_path):
+    src = skill(tmp_path)
+    (src / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": "a"}, {"id": "b"}], "extra": 1}))
+    out = tier3.prepare(src, None, tmp_path / "out" / "demo", max_cases=1)
+    assert json.loads((out / "evals" / "evals.json").read_text()) == {"evals": [{"id": "a"}], "extra": 1}
+
+
+def test_a_full_run_keeps_every_case(tmp_path):
+    src = skill(tmp_path)
+    (src / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": "a"}, {"id": "b"}]}))
+    out = tier3.prepare(src, None, tmp_path / "out" / "demo")
+    assert len(json.loads((out / "evals" / "evals.json").read_text())["evals"]) == 2
+
+
+@pytest.mark.parametrize("content", ["not json", '["a list"]', '{"evals": "not a list"}', '{"evals": []}'])
+def test_a_smoke_run_refuses_an_evals_json_it_cant_cut(tmp_path, content):
+    """Keen on #258: a smoke run fails closed, never widening to every case."""
+    src = skill(tmp_path)
+    (src / "evals" / "evals.json").write_text(content)
+    with pytest.raises(tier3.NoSmokeCase):
+        tier3.prepare(src, None, tmp_path / "out" / "demo", max_cases=1)
+
+
+@pytest.mark.parametrize("name", ["evals.jsonl", "evals.yaml", "evals.yml", "dataset.json", "dataset.jsonl"])
+def test_a_smoke_run_refuses_case_files_other_than_evals_json(tmp_path, name):
+    src = skill(tmp_path)
+    (src / "evals" / name).write_text("id: a\n")
+    with pytest.raises(tier3.NoSmokeCase, match=name):
+        tier3.prepare(src, None, tmp_path / "out" / "demo", max_cases=1)
+
+
+def test_a_smoke_run_refuses_a_linked_evals_json(tmp_path):
+    src = skill(tmp_path)
+    (tmp_path / "elsewhere.json").write_text('{"evals": [{"id": "a"}, {"id": "b"}]}')
+    (src / "evals" / "evals.json").unlink()
+    (src / "evals" / "evals.json").symlink_to(tmp_path / "elsewhere.json")
+    with pytest.raises(tier3.NoSmokeCase, match="regular file"):
+        tier3.prepare(src, None, tmp_path / "out" / "demo", max_cases=1)
+
+
+def test_a_smoke_run_without_case_files_runs_the_starter_case(tmp_path):
+    src = skill(tmp_path)
+    (src / "evals" / "evals.json").unlink()
+    (src / "evals" / "input.txt").write_text("data")
+    out = tier3.prepare(src, None, tmp_path / "out" / "demo", max_cases=1)
+    assert (out / "evals" / "input.txt").is_file()
+
+
+def test_a_full_run_leaves_any_case_file_as_published(tmp_path):
+    src = skill(tmp_path)
+    (src / "evals" / "evals.json").write_text("not json")
+    out = tier3.prepare(src, None, tmp_path / "out" / "demo")
+    assert (out / "evals" / "evals.json").read_text() == "not json"

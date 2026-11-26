@@ -521,3 +521,66 @@ def test_an_unreadable_egress_config_stops_the_pilot_before_any_token(tmp_path, 
     assert pilot.main([]) == 2
     assert "could not read the egress proxy's config" in capsys.readouterr().err
     assert issued == [] and not (tmp_path / "results.jsonl").exists()
+
+
+def smoke_pilot(tmp_path, monkeypatch, argv, refuse=False):
+    """pilot.main with everything outside it faked; returns the tier3.run calls and the records written."""
+    rows = [
+        {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": "quixbugs-python", "repeats": 3},
+        {"repo": "c/d", "skill_path": "t", "category": "c", "task_set": None, "repeats": 1},
+    ]
+    monkeypatch.setattr(pilot, "load_skills", lambda: rows)
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "results.jsonl")
+    monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
+    monkeypatch.setattr(pilot, "egress_mode", lambda: "open")
+    monkeypatch.setattr(pilot, "issue_token", lambda run_id, f: f.write_text("synthetic-not-a-token"))
+    monkeypatch.setattr(pilot, "revoke", lambda run_id: True)
+    monkeypatch.setattr(pilot, "usage", lambda run_id: {"requests": 0})
+    monkeypatch.setattr(pilot, "read_lift", lambda out: {})
+    monkeypatch.setattr(tier3, "trial_env", lambda env: env)
+    calls = []
+
+    def fake_run(repo, skill_path, task_set, env, label=None, max_cases=None):
+        calls.append({"repo": repo, "label": label, "max_cases": max_cases})
+        if refuse:
+            raise tier3.NoSmokeCase("smoke: can't take one case from evals.jsonl")
+        out = pilot.ev.ROOT / "reports" / "x"
+        return {"exit": 1, "cases": "shared", "out": out, "commit": "c" * 40, "tree_digest": "d", "duration_s": 1.0}
+
+    monkeypatch.setattr(tier3, "run", fake_run)
+    assert pilot.main(argv) == 0
+    recs = [json.loads(line) for line in (tmp_path / "results.jsonl").read_text().splitlines()]
+    return calls, recs
+
+
+def test_a_smoke_run_is_one_run_per_skill_on_its_first_case(tmp_path, monkeypatch):
+    """#257: the fast check before every full run. Repeats are ignored, each run gets one case, and both the run ID
+    and the record say smoke, so it is never read as a pilot measurement."""
+    calls, recs = smoke_pilot(tmp_path, monkeypatch, ["--smoke"])
+    assert [c["repo"] for c in calls] == ["a/b", "c/d"]  # one each, though a/b repeats 3 times
+    assert all(c["max_cases"] == 1 for c in calls)
+    assert all(c["label"].startswith("smoke-") for c in calls)
+    assert all(r["smoke"] is True and r["id"].startswith("smoke-") for r in recs)
+
+
+def test_a_full_run_keeps_every_repeat_and_case(tmp_path, monkeypatch):
+    calls, recs = smoke_pilot(tmp_path, monkeypatch, [])
+    assert [c["repo"] for c in calls] == ["a/b"] * 3 + ["c/d"]
+    assert all(c["max_cases"] is None and c["label"].startswith("pilot-") for c in calls)
+    assert all(r["smoke"] is False for r in recs)
+
+
+def test_the_dry_run_shows_what_a_smoke_run_would_do(tmp_path, monkeypatch, capsys):
+    rows = [{"repo": "a/b", "skill_path": "s", "category": "c", "task_set": "quixbugs-python", "repeats": 3}]
+    monkeypatch.setattr(pilot, "load_skills", lambda: rows)
+    assert pilot.main(["--smoke", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "(first 1 only)" in out and out.strip().endswith("1 runs, smoke: one case each, both arms")
+
+
+def test_a_smoke_run_that_cant_cut_the_cases_is_recorded_failed_not_widened(tmp_path, monkeypatch):
+    calls, recs = smoke_pilot(tmp_path, monkeypatch, ["--smoke"], refuse=True)
+    assert len(calls) == 2  # each skill tried once, never retried on every case
+    for r in recs:
+        assert r["status"] == "failed" and r["scores"] is None and r["smoke"] is True
+        assert r["reason"].startswith("NoSmokeCase: smoke: can't take one case")

@@ -80,12 +80,19 @@ then check that `systemctl is-active evalskills-docker-proxy` says `inactive`. `
 while it runs, because it keeps serving the code it started with (#230). `SKILLEVALUATOR_DIR` must be set: the runner
 reads the evaluator's version from `/opt/skillevaluator/.venv` before the first run, and stops if it isn't there.
 
+Always start with a smoke run (`--smoke`, docs/CONVENTIONS.md, Live runs). It runs each selected skill once, on
+its first case only, with both arms, so a broken agent, grader or record shows up in minutes, not after an hour of
+repeats. A skill whose own cases can't be cut to one (anything but a plain `evals.json`) is refused, recorded
+`failed`, and never run in full. Run the full set only once a smoke run on the same commit and model has finished
+`completed`. Inside `tmux`,
+so a dropped connection can't end it:
 ```
-python3 -I pipeline/live_pilot.py --dry-run          # the 16 planned runs; nothing starts
+python3 -I pipeline/live_pilot.py --smoke --dry-run  # what a smoke run would start; nothing starts
 SKILLEVALUATOR_DIR=/opt/skillevaluator DOCKER_HOST=unix:///run/evalskills/docker.sock \
 TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 TIER3_AGENT_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \
 SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \
-python3 -I pipeline/live_pilot.py --only obra__superpowers__skills__systematic-debugging   # one skill first
+python3 -I pipeline/live_pilot.py --smoke --only obra__superpowers__skills__systematic-debugging   # smoke first
+python3 -I pipeline/live_pilot.py --dry-run          # the full plan: every case and repeat
 ```
 
 `tier3.py` refuses to start anywhere but the socket proxy with `--env-mode gvisor`, while the proxy reports the
