@@ -258,3 +258,19 @@
   retired model to compare with. From run 11 on,
   the pilot's agent and judge model is the 3.5 one. A provider can retire a model without warning, so each live result
   is tied to the model it names (METHODOLOGY, live tier).
+
+## E15 — live pilot run 11: the agent works, grading leaves no reward (2026-11-25, #121, #254)
+- Setup as E14, on `nvidia/nemotron-3.5-super-vl-120b-a12b`, with `obra/superpowers` systematic-debugging on QuixBugs
+  cases. Enes ran every host step. The SSH session dropped partway through, and the run went on to the end anyway.
+- **The agent path works end to end** for the first time. In 23 minutes the run made 83 gateway calls (649,558 prompt
+  and 29,991 completion tokens), with 0 refused and 0 unmetered, and the token was revoked when it ended. In the trials
+  we read, the agent found and fixed the case's bug.
+- **No trial was graded.** 10 of the 12 trials ended in Harbor's `RewardFileNotFoundError`, and none of the 12 has a
+  `reward.*` file. The other 2 failed in the agent step after the agent had finished. The run is recorded `failed`
+  ("no lift.json"), with no score.
+- **Why grading wrote nothing is unknown.** The verifier's output lives in Harbor's `_harbor-jobs/`, which
+  SkillEvaluator deletes unless `--harbor-keep-jobs` is passed, and our runner didn't pass it. Ruled out: the socket
+  proxy. In the run window it refused only Harbor's image OS check, which Harbor skips when it fails, and network
+  lookups at teardown. `run.log` has no permission error either.
+- -> Pilot reports now keep Harbor's job folders (#254), and they stay private like the rest of `reports/`. The next
+  one-skill run shows the grader's own error.

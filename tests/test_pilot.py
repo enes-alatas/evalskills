@@ -456,6 +456,11 @@ def test_skillevaluator_runs_from_its_venv_not_through_uv(tmp_path):
     assert cmd[cmd.index("--env-mode") + 1] == "gvisor"
 
 
+def test_harbor_job_folders_are_kept_for_the_private_report(tmp_path):
+    """#254: without the flag SkillEvaluator deletes _harbor-jobs, and with it each trial's verifier output."""
+    assert "--harbor-keep-jobs" in tier3.command(tmp_path, tmp_path / "out", "a/b", "c" * 40)
+
+
 def test_as_root_a_trial_keeps_the_root_owned_home_and_its_own_xdg_folders(tmp_path, monkeypatch):
     monkeypatch.setattr(tier3.os, "geteuid", lambda: 0)
     me = pwd.getpwuid(os.getuid())

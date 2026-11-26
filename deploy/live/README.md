@@ -94,6 +94,9 @@ trial user (`TIER3_TRIAL_USER`, default `evals`) in a fresh folder under `TIER3_
 root copies the report's plain files to `reports/` when the trial ends (ADR-0003, amended 2026-11-13).
 A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable
 cases as `inconclusive`, and one whose Dockerfile the proxy refuses as `unsupported`. None of them gets a score.
+The report keeps Harbor's job folders (`--harbor-keep-jobs`, #254). When a trial ends without a reward, its grader's
+output is in `_harbor-jobs/<job>/<trial>/verifier/test-stdout.txt` under the report folder:
+`find reports/<skill>/<run> -path '*verifier*' -name 'test-std*'`.
 
 While a run goes, SkillEvaluator's output is shown on the terminal as it arrives, each line prefixed with the run's
 ID, and the same output is kept in the report's `run.log` (#239). The text comes from the trial, so escape sequences
