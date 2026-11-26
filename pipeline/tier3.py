@@ -266,8 +266,40 @@ def strip_own_grading(evals: Path) -> list[str]:
     return gone
 
 
-def prepare(skill_dir: Path, task_set: str | None, dest: Path) -> Path:
-    """Copy the skill to dest. Without a task set it stays as published; with one, the set replaces its evals/."""
+class NoSmokeCase(ValueError):
+    """A smoke run can't take a single case from these evals/: the run is refused, never widened to every case."""
+
+
+# Every case file the pinned SkillEvaluator adapter reads (find_evals_file), in its order
+OWN_CASE_FILES = ("evals.json", "evals.jsonl", "evals.yaml", "evals.yml", "dataset.json", "dataset.jsonl")
+
+
+def first_cases(evals: Path, max_cases: int) -> None:
+    """Keep only the first max_cases of a skill's own cases, in place: a smoke run (#257). Only a plain evals.json with
+    an "evals" list can be cut. Any other case file (jsonl, yaml, dataset.*, a link, a list-shaped or unreadable
+    evals.json) refuses the run with NoSmokeCase, so a smoke run fails closed and never runs every case. evals/ with no
+    case file runs SkillEvaluator's one starter case, which needs no cut."""
+    present = [n for n in OWN_CASE_FILES if (evals / n).is_symlink() or (evals / n).exists()]
+    if not present:
+        return
+    if present != ["evals.json"]:
+        raise NoSmokeCase(f"smoke: can't take one case from {', '.join(present)}; only a plain evals.json can be cut")
+    path = evals / "evals.json"
+    if path.is_symlink() or not path.is_file():
+        raise NoSmokeCase("smoke: evals.json isn't a regular file")
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError) as e:
+        raise NoSmokeCase("smoke: evals.json can't be read") from e
+    if not (isinstance(data, dict) and isinstance(data.get("evals"), list) and data["evals"]):
+        raise NoSmokeCase('smoke: evals.json has no "evals" list to cut')
+    data["evals"] = data["evals"][:max_cases]
+    path.write_text(json.dumps(data, indent=1))
+
+
+def prepare(skill_dir: Path, task_set: str | None, dest: Path, max_cases: int | None = None) -> Path:
+    """Copy the skill to dest. Without a task set it stays as published; with one, the set replaces its evals/.
+    max_cases keeps only the first cases (a smoke run, #257)."""
     if task_set:
         src = SHARED / task_set
         if not (src / "evals.json").is_file():
@@ -281,6 +313,8 @@ def prepare(skill_dir: Path, task_set: str | None, dest: Path) -> Path:
             evals.unlink()  # a linked evals/ could point anywhere; the skill then runs on SkillEvaluator's starter case
         elif evals.is_dir():
             strip_own_grading(evals)
+            if max_cases:
+                first_cases(evals, max_cases)
         return dest
     shutil.rmtree(dest / "evals", ignore_errors=True)  # a shared set replaces the skill's own cases
     (dest / "evals").mkdir()
@@ -289,6 +323,8 @@ def prepare(skill_dir: Path, task_set: str | None, dest: Path) -> Path:
     for e in data["evals"]:
         if "expected_skill" not in e:
             e["expected_skill"] = dest.name
+    if max_cases:
+        data["evals"] = data["evals"][:max_cases]
     (dest / "evals" / "evals.json").write_text(json.dumps(data, indent=1))
     for name in ("grader.py", "config.yml"):
         if (src / name).is_file():
@@ -582,6 +618,7 @@ def run(
     cleanup=remove_trial_objects,
     label: str | None = None,
     progress_out=None,
+    max_cases: int | None = None,
 ) -> dict:
     """One live evaluation. Returns its exit code, cases, report dir, commit and tree digest; never a score.
 
@@ -597,7 +634,7 @@ def run(
     work = Path(tempfile.mkdtemp(prefix="t3-", dir=run_root))  # 0700
     keep = False
     try:
-        skill = prepare(repo_dir / skill_path, task_set, work / "skill" / Path(skill_path).name)
+        skill = prepare(repo_dir / skill_path, task_set, work / "skill" / Path(skill_path).name, max_cases)
         cases = cases_label(skill, task_set)
         out = (
             ev.REPORTS

@@ -10,7 +10,13 @@ runs as the trial user (tier3.TRIAL_USER), through the socket proxy:
   SKILLEVALUATOR_DIR=/opt/skillevaluator DOCKER_HOST=unix:///run/evalskills/docker.sock \\
   TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 TIER3_AGENT_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \\
   SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \\
-  python3 -I pipeline/live_pilot.py [--only SLUG] [--dry-run]
+  python3 -I pipeline/live_pilot.py [--only SLUG] [--smoke] [--dry-run]
+
+--smoke is the fast check that comes before every full run (docs/CONVENTIONS.md, Live runs; #257): each selected skill
+runs once, on its first case only, with both arms, so the whole path (agent, grader, record) is tested in minutes. Its
+records say "smoke": true. They check the pipeline, and are never read or reported as a pilot result. A skill whose
+own cases can't be cut to one (anything but a plain evals.json) is refused and recorded failed, never run in full.
+--dry-run prints the plan, runs and trials, without starting anything.
 """
 
 import datetime as dt
@@ -27,6 +33,7 @@ import tier3  # noqa: E402
 
 SKILLS = ev.ROOT / "pilot" / "skills.tsv"  # not under catalog/: the server reads every TSV there
 RECORDS = ev.REPORTS / "pilot" / "results.jsonl"
+SMOKE_CASES = 1  # --smoke: the first case only (#257)
 GATEWAY = os.environ.get("PILOT_GATEWAY_CONTAINER", "evalskills-gateway")
 MAIN_DOCKER = os.environ.get("PILOT_MAIN_DOCKER_HOST", "unix:///var/run/docker.sock")  # where the gateway runs
 GATEWAY_CONFIG = "/etc/evalskills/gateway.json"
@@ -65,9 +72,10 @@ def slug(row: dict) -> str:
     return f"{row['repo']}/{row['skill_path']}".replace("/", "__").replace(".", "_")
 
 
-def run_id_for(row: dict, repeat: int, now: dt.datetime) -> str:
-    """Unique per run: the gateway refuses a reused run ID, so a same-day retry needs the time, not just the date."""
-    return f"pilot-{now:%Y%m%dT%H%M%S}-{slug(row)}-{repeat}"
+def run_id_for(row: dict, repeat: int, now: dt.datetime, smoke: bool = False) -> str:
+    """Unique per run: the gateway refuses a reused run ID, so a same-day retry needs the time, not just the date.
+    A smoke run's ID starts "smoke-", so every progress line and record shows it isn't a pilot measurement."""
+    return f"{'smoke' if smoke else 'pilot'}-{now:%Y%m%dT%H%M%S}-{slug(row)}-{repeat}"
 
 
 def gateway(*args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -180,6 +188,7 @@ def record(
     evaluator: dict,
     *,
     egress: str,
+    smoke: bool = False,
 ) -> dict:
     status, reason = status_of(res["exit"], lift, res.get("unsupported", False), res.get("stopped"))
     agent = next(iter(lift.values()), {})
@@ -212,11 +221,21 @@ def record(
         "gateway": counts,
         "cost_usd": None,  # the NVIDIA Build trial key is not billed; tokens are in "gateway"
         "report_dir": str(res["out"].relative_to(ev.ROOT)),
+        "smoke": smoke,
     }
 
 
 def crashed(
-    row: dict, repeat: int, run_id: str, why: str, counts: dict | None, started: str, evaluator: dict, *, egress: str
+    row: dict,
+    repeat: int,
+    run_id: str,
+    why: str,
+    counts: dict | None,
+    started: str,
+    evaluator: dict,
+    *,
+    egress: str,
+    smoke: bool = False,
 ) -> dict:
     """A run that never reached SkillEvaluator's results: failed, with the reason and no scores."""
     return {
@@ -237,17 +256,20 @@ def crashed(
         "scores": None,
         "gateway": counts,
         "cost_usd": None,
+        "smoke": smoke,
     }
 
 
 def main(argv: list[str]) -> int:
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
+    smoke = "--smoke" in argv
     rows = [r for r in load_skills() if only in (None, slug(r))]
-    plan = [(r, i) for r in rows for i in range(1, r["repeats"] + 1)]
+    plan = [(r, i) for r in rows for i in range(1, (1 if smoke else r["repeats"]) + 1)]
+    max_cases = SMOKE_CASES if smoke else None
     if "--dry-run" in argv:
         for r, i in plan:
-            print(f"{slug(r)} #{i} cases={r['task_set'] or 'own'}")
-        print(f"{len(plan)} runs")
+            print(f"{slug(r)} #{i} cases={r['task_set'] or 'own'}{f' (first {max_cases} only)' if max_cases else ''}")
+        print(f"{len(plan)} runs{', smoke: one case each, both arms' if smoke else ''}")
         return 0
     try:  # before any token or trial: a missing evaluator must not cost a run, or lose its record afterwards (#200)
         evaluator = tier3.evaluator_version()
@@ -262,7 +284,7 @@ def main(argv: list[str]) -> int:
     for row, i in plan:
         now = dt.datetime.now(dt.UTC)
         started = now.isoformat(timespec="seconds")
-        run_id = run_id_for(row, i, now)
+        run_id = run_id_for(row, i, now, smoke)
         try:  # per run, before its token: the record must say what the trial could reach
             egress = egress_mode()
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError) as e:
@@ -285,15 +307,17 @@ def main(argv: list[str]) -> int:
                 return 2
             try:
                 env = tier3.trial_env({**os.environ, "TIER3_GATEWAY_TOKEN_FILE": str(token_file)})  # Unsafe stops all
-                res, crash = tier3.run(row["repo"], row["skill_path"], row["task_set"], env, label=run_id), None
+                res = tier3.run(row["repo"], row["skill_path"], row["task_set"], env, label=run_id, max_cases=max_cases)
+                crash = None
             except Exception as e:  # a clone or setup error fails this run, visibly, and the pilot goes on
                 res, crash = None, f"{type(e).__name__}: {str(e)[:200]}"
             finally:
                 revoked = revoke(run_id)
         if res is None:
-            rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator, egress=egress)
+            rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator, egress=egress, smoke=smoke)
         else:
-            rec = record(row, i, run_id, res, read_lift(res["out"]), usage(run_id), started, evaluator, egress=egress)
+            lift = read_lift(res["out"])
+            rec = record(row, i, run_id, res, lift, usage(run_id), started, evaluator, egress=egress, smoke=smoke)
         rec["token_revoked"] = revoked
         with RECORDS.open("a") as f:
             f.write(json.dumps(rec) + "\n")

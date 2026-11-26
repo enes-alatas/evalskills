@@ -52,7 +52,8 @@ others. Our reading (Enes, ADR-0007 as amended 2026-11-12): nobody but us runs a
 publish our own pilot's measured results. So no submission triggers a live run, an LLM-assisted security scan or
 embeddings on it. It backs one internal pilot (#121), which we run on ten skills we chose. Its per-skill results
 (scores, lift, spread between runs, runtime, requests, tokens) may be published, labelled as the pilot's. Agent
-transcripts, raw reports and per-case judge verdicts stay private.
+transcripts, raw reports and per-case judge verdicts stay private. A smoke run (one case, one run, marked `smoke`)
+only checks that the pipeline works before a full run, and is never reported as a result.
 
 From 2026-11-20 (#236), the pilot's trials have open web access. The agent and the skill could reach any public
 site, including published solutions to the pilot's cases: QuixBugs' fixed programs are public. Until a pilot result

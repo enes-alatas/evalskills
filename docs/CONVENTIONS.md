@@ -34,6 +34,22 @@ an ADR instead. Adapted from enes-alatas/spool's conventions, trimmed to this re
 - **An item only Enes can do** (a setting, a secret, a live run) is sent to him by DM the moment it is ready, naming
   what to do and including the PR link.
 
+## Live runs
+Every live run spends model budget and an operator's time on the shared host, so it is kept as small as the question it
+answers (#257).
+- **Smoke first.** Every live run, or series of runs, starts with a smoke run: `live_pilot.py --smoke`, which runs each
+  selected skill once, on its first case only, with both arms, in a few minutes. A full run (every case and repeat)
+  starts only after a smoke run on the same commit and model has finished `completed`. A smoke record says
+  `"smoke": true`, and its run ID starts `smoke-`. It checks the pipeline and is never reported as a result.
+- **A diagnostic run is a smoke run.** A run asked for to find out why something failed uses `--smoke` and `--only` one
+  skill. Before asking for any run, read everything the last one left: its record, report, `run.log` and the proxy
+  journal. Ask for a run only for a question that evidence can't answer.
+- **Say what a run is before asking for it.** The ask names how many runs, cases and arms it makes, how long it takes
+  and roughly what it spends, taken from the last comparable record. `--dry-run` prints the plan. It also says what
+  result moves us forward and what result means stop.
+- **Host steps one at a time.** An operator runs one command per message, each with the output that shows it worked.
+  Anything over a few minutes runs in `tmux`. A long run is never left in a session that a dropped connection ends.
+
 ## Issues
 - Every issue has exactly one type label: `bug`, `new feature`, `improvement`, `chore`, `documentation`,
   `security` or `question`. Use the forms. A `gh` filing adds the label and copies the form's headings itself.
