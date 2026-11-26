@@ -339,6 +339,10 @@ def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
         commit,
         "--results-dir",
         str(out),
+        # Harbor's job folders hold each trial's verifier output (test-stdout.txt). Without this flag SkillEvaluator
+        # deletes them at the end of the run, and a grade that wrote no reward can't be diagnosed (#254). They go
+        # into the private report with the rest (copy_report), and like it are never committed.
+        "--harbor-keep-jobs",
     ] + (["--agent-model", f"{AGENT}=openai/{AGENT_MODEL}"] if AGENT_MODEL else [])
 
 
