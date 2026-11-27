@@ -838,3 +838,11 @@ def test_cleanup_says_so_when_the_proxy_never_answers(tmp_path, monkeypatch, cap
     monkeypatch.setattr(tier3, "remove_trial_objects", lambda: pytest.fail("not without a proxy"))
     assert pilot.cleanup(tmp_path / "run") == 1
     assert any("didn't answer" in p for p in json.loads(capsys.readouterr().out)["problems"])
+
+
+def test_a_skill_without_cases_gets_skillevaluators_starter_case(tmp_path):
+    """#268: without --autopilot the expert command fails on a skill with no evals/ before any trial."""
+    assert "--autopilot" in tier3.command(tmp_path, tmp_path / "out", "a/b", "c" * 40)
+    skill = tmp_path / "skill"
+    skill.mkdir()
+    assert tier3.cases_label(skill, None) == tier3.CASES_STARTER
