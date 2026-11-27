@@ -11,17 +11,28 @@ runs as the trial user (tier3.TRIAL_USER), through the socket proxy:
   TIER3_GATEWAY_URL=http://evals-gateway:8443/v1 TIER3_AGENT_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \\
   SKILL_EVAL_LLM_MODEL=nvidia/nemotron-3.5-super-vl-120b-a12b \\
   python3 -I pipeline/live_pilot.py [--only SLUG] [--smoke] [--dry-run]
+  python3 -I pipeline/live_pilot.py --cleanup          # after a hard kill only; see Stopping below
 
 --smoke is the fast check that comes before every full run (docs/CONVENTIONS.md, Live runs; #257): each selected skill
 runs once, on its first case only, with both arms, so the whole path (agent, grader, record) is tested in minutes. Its
 records say "smoke": true. They check the pipeline, and are never read or reported as a pilot result. A skill whose
 own cases can't be cut to one (anything but a plain evals.json) is refused and recorded failed, never run in full.
 --dry-run prints the plan, runs and trials, without starting anything.
+
+Stopping (#259): Ctrl-C once lets the current run finish, then stops; the rest of the plan is not started. Ctrl-C
+again, or SIGTERM, stops the current trial now: it is cleaned up like a timed-out one and recorded failed, "stopped by
+the operator", with no score. After a hard kill (SIGKILL, a lost session, a reboot), --cleanup kills what the trial
+user left running, removes the trial's containers, networks and images through the socket proxy, revokes every
+gateway token still open and removes the run folders. It refuses while a pilot holds the lock.
 """
 
 import datetime as dt
+import fcntl
 import json
 import os
+import pwd
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -81,7 +92,8 @@ def run_id_for(row: dict, repeat: int, now: dt.datetime, smoke: bool = False) ->
 def gateway(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """A gateway CLI command inside its container, on the main daemon. Output never holds a token."""
     cmd = ["docker", "-H", MAIN_DOCKER, "exec", GATEWAY, "python3", "-I", "/opt/gateway/gateway.py", *args]
-    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=60)
+    # Its own session, like every docker call here: a Ctrl-C meant for the pilot must not kill a revoke halfway (#259).
+    return subprocess.run(cmd, capture_output=True, text=True, check=check, timeout=60, start_new_session=True)
 
 
 def egress_mode() -> str:
@@ -94,6 +106,7 @@ def egress_mode() -> str:
         text=True,
         check=True,
         timeout=60,
+        start_new_session=True,
     )
     return "open" if json.loads(p.stdout).get("open_egress") is True else "allowlist"
 
@@ -108,11 +121,15 @@ def issue_token(run_id: str, dest: Path) -> None:
             capture_output=True,
             check=True,
             timeout=60,
+            start_new_session=True,
         )
         os.chmod(dest, 0o600)
     finally:
         subprocess.run(
-            ["docker", "-H", MAIN_DOCKER, "exec", GATEWAY, "rm", "-f", inside], capture_output=True, timeout=60
+            ["docker", "-H", MAIN_DOCKER, "exec", GATEWAY, "rm", "-f", inside],
+            capture_output=True,
+            timeout=60,
+            start_new_session=True,
         )
 
 
@@ -260,7 +277,84 @@ def crashed(
     }
 
 
+class Stop:
+    """What the operator asked for (#259). The handler only sets flags; the loop and the trial's wait read them, so a
+    signal never lands in the middle of issuing or revoking a token."""
+
+    def __init__(self):
+        self.after_run = self.now = False
+
+    def handle(self, signum, _frame) -> None:
+        if signum == signal.SIGTERM or self.after_run:
+            self.after_run = self.now = True
+            msg = "pilot: stopping the current trial now; it is cleaned up and recorded failed\n"
+        else:
+            self.after_run = True
+            msg = "pilot: stopping after the current run; Ctrl-C again to stop it now\n"
+        os.write(2, msg.encode())  # not print: a handler may interrupt a print to stderr
+
+
+def take_lock() -> int | None:
+    """One pilot at a time, and no --cleanup under a running one: an flock, freed by the kernel when we exit."""
+    lock = RECORDS.parent / ".lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def cleanup(run_root: Path | None = None) -> int:
+    """After a hard kill: what tier3.run and main would have cleaned up, done now. Prints what it did."""
+    if os.geteuid() != 0:
+        print("cleanup refused: run it as root, from /opt/evalskills (deploy/live/README.md)", file=sys.stderr)
+        return 2
+    lock = take_lock()
+    if lock is None:
+        print("cleanup refused: a pilot is still running (it holds the lock)", file=sys.stderr)
+        return 2
+    try:
+        return _cleanup(run_root or tier3.RUN_ROOT)
+    finally:
+        os.close(lock)
+
+
+def _cleanup(run_root: Path) -> int:
+    problems = []
+    stopped = tier3.kill_trial_user(pwd.getpwnam(tier3.TRIAL_USER).pw_uid)
+    if not stopped:
+        problems.append(f"processes of {tier3.TRIAL_USER} survived SIGKILL; run folders left in place")
+    left = tier3.remove_trial_objects()
+    if left:
+        problems.append(f"not removed: {', '.join(left)} (is the socket proxy up? deploy/live/README.md)")
+    try:
+        rows = json.loads(gateway("usage", "--config", GATEWAY_CONFIG).stdout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
+        rows = None
+        problems.append("could not list gateway tokens (is the gateway up?)")
+    open_runs = [r["run_id"] for r in rows or [] if not r.get("revoked")]
+    revoked = [run_id for run_id in open_runs if revoke(run_id)]
+    if len(revoked) < len(open_runs):
+        problems.append("some tokens not revoked")
+    removed = 0
+    if stopped:  # root never reads or removes a folder something of the trial may still write
+        for d in sorted(run_root.glob("t3-*")):
+            if d.is_dir() and not d.is_symlink():
+                try:
+                    shutil.rmtree(d)  # fd-based on Linux: never follows a link
+                    removed += 1
+                except OSError as e:  # say so with the rest, never end before the report of what was done
+                    problems.append(f"run folder {d.name} not removed ({type(e).__name__})")
+    print(json.dumps({"tokens_revoked": revoked, "run_folders_removed": removed, "problems": problems}))
+    return 1 if problems else 0
+
+
 def main(argv: list[str]) -> int:
+    if "--cleanup" in argv:
+        return cleanup()
     only = argv[argv.index("--only") + 1] if "--only" in argv else None
     smoke = "--smoke" in argv
     rows = [r for r in load_skills() if only in (None, slug(r))]
@@ -281,7 +375,25 @@ def main(argv: list[str]) -> int:
         )
         return 2
     RECORDS.parent.mkdir(parents=True, exist_ok=True)
-    for row, i in plan:
+    lock = take_lock()
+    if lock is None:
+        print("pilot stopped: another pilot or --cleanup is running (it holds the lock)", file=sys.stderr)
+        return 2
+    stop = Stop()
+    before = {sig: signal.signal(sig, stop.handle) for sig in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        return _run_plan(plan, smoke, max_cases, evaluator, stop)
+    finally:
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+        os.close(lock)
+
+
+def _run_plan(plan: list, smoke: bool, max_cases: int | None, evaluator: dict, stop: Stop) -> int:
+    for n, (row, i) in enumerate(plan):
+        if stop.after_run:
+            print(f"pilot stopped by the operator: {len(plan) - n} run(s) not started", file=sys.stderr)
+            return 130
         now = dt.datetime.now(dt.UTC)
         started = now.isoformat(timespec="seconds")
         run_id = run_id_for(row, i, now, smoke)
@@ -307,7 +419,15 @@ def main(argv: list[str]) -> int:
                 return 2
             try:
                 env = tier3.trial_env({**os.environ, "TIER3_GATEWAY_TOKEN_FILE": str(token_file)})  # Unsafe stops all
-                res = tier3.run(row["repo"], row["skill_path"], row["task_set"], env, label=run_id, max_cases=max_cases)
+                res = tier3.run(
+                    row["repo"],
+                    row["skill_path"],
+                    row["task_set"],
+                    env,
+                    label=run_id,
+                    max_cases=max_cases,
+                    should_stop=lambda: stop.now,
+                )
                 crash = None
             except Exception as e:  # a clone or setup error fails this run, visibly, and the pilot goes on
                 res, crash = None, f"{type(e).__name__}: {str(e)[:200]}"
@@ -332,6 +452,9 @@ def main(argv: list[str]) -> int:
                 }
             )
         )
+    if stop.after_run:
+        print("pilot stopped by the operator after its last run", file=sys.stderr)
+        return 130
     return 0
 
 

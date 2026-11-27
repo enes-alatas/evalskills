@@ -114,6 +114,23 @@ and control characters are removed, lines are cut to 200 characters, and at most
 rest are counted and stay in `run.log`. SkillEvaluator prints a "still running" line every minute, so a terminal that
 stays silent for longer means something stalled. `TIER3_PROGRESS=0` turns this off.
 
+### Stopping a run (#259)
+
+- **Ctrl-C once:** the current run finishes and is recorded, and the pilot then stops. The rest of the plan isn't
+  started, and the pilot prints how many runs that leaves.
+- **Ctrl-C again, or `kill -TERM` on the pilot:** the current trial stops now. It is contained the way a timed-out
+  trial is: its processes are killed, its containers, networks and images are removed through the socket proxy, its
+  report is copied and its token revoked. It is recorded `failed`, "stopped by the operator", with no score.
+- **Never `kill -9`, and never close the `tmux` window.** Either leaves the trial's containers, networks, open token and
+  run folder behind. If it happens anyway, start the socket proxy if it is down, then run, as root from
+  `/opt/evalskills`:
+  ```
+  python3 -I pipeline/live_pilot.py --cleanup
+  ```
+  This kills whatever the trial user still runs, removes the trial objects, revokes every gateway token still open and
+  removes `/srv/evals/run/t3-*`. It prints what it did and anything it couldn't do. It refuses while a pilot holds
+  the lock (`reports/pilot/.lock`), and only one pilot runs at a time.
+
 ## Known limits
 - Trial-to-gateway traffic is plain HTTP on the local bridge. The per-run token crosses it, and it is worthless
   once the run is revoked.
