@@ -15,6 +15,14 @@ import evaluate as ev  # noqa: E402
 import live_pilot as pilot  # noqa: E402
 import tier3  # noqa: E402
 
+REAL_WAIT_FOR_PROXY = tier3.wait_for_proxy
+
+
+@pytest.fixture(autouse=True)
+def proxy_up(monkeypatch):
+    """No test here talks to a real proxy; the wait itself is tested with REAL_WAIT_FOR_PROXY."""
+    monkeypatch.setattr(tier3, "wait_for_proxy", lambda *a, **k: True)
+
 
 def test_pilot_records_live_under_the_ignored_reports_dir():
     rel = pilot.RECORDS.relative_to(ROOT)
@@ -769,3 +777,64 @@ def test_the_activation_verdict_is_never_read_through_a_link(tmp_path):
         real / "systematic-debugging" / "20261127_160355_2435509_d0b537eb7bc8"
     )
     assert pilot.never_activated(tmp_path / "out") is False
+
+
+def test_waiting_for_the_proxy_ends_once_it_answers_or_after_the_timeout(tmp_path):
+    """#264: systemctl start returns before the proxy listens."""
+    import socketserver
+    import threading
+    import time
+    from http.server import BaseHTTPRequestHandler
+
+    assert REAL_WAIT_FOR_PROXY(f"unix://{tmp_path}/absent.sock", timeout=0.3, poll=0.1) is False
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def address_string(self):
+            return "unix"
+
+        def do_GET(self):
+            self.send_response(200 if self.path == "/_ping" else 404)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+    sock = Path("/tmp") / f"t3ping-{os.getpid()}.sock"
+
+    def start_late():
+        time.sleep(0.4)
+        srv = socketserver.UnixStreamServer(str(sock), H)
+        started.append(srv)
+        srv.serve_forever(poll_interval=0.05)
+
+    started = []
+    threading.Thread(target=start_late, daemon=True).start()
+    try:
+        assert REAL_WAIT_FOR_PROXY(f"unix://{sock}", timeout=5, poll=0.1) is True
+    finally:
+        while not started:
+            time.sleep(0.05)
+        started[0].shutdown()
+        sock.unlink()
+
+
+def test_a_pilot_waits_for_the_proxy_and_stops_before_any_token(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(tier3, "wait_for_proxy", lambda *a, **k: False)
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "pilot" / "results.jsonl")
+    monkeypatch.setattr(pilot, "load_skills", lambda: [{"repo": "a/b", "skill_path": "s", "repeats": 1}])
+    monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
+    monkeypatch.setattr(pilot, "issue_token", lambda *a: pytest.fail("no token without a proxy"))
+    assert pilot.main([]) == 2 and "didn't answer" in capsys.readouterr().err
+    lock = pilot.take_lock()
+    assert lock is not None  # the lock was released
+    os.close(lock)
+
+
+def test_cleanup_says_so_when_the_proxy_never_answers(tmp_path, monkeypatch, capsys):
+    as_root_cleanup(tmp_path, monkeypatch)
+    monkeypatch.setattr(tier3, "wait_for_proxy", lambda *a, **k: False)
+    monkeypatch.setattr(tier3, "remove_trial_objects", lambda: pytest.fail("not without a proxy"))
+    assert pilot.cleanup(tmp_path / "run") == 1
+    assert any("didn't answer" in p for p in json.loads(capsys.readouterr().out)["problems"])

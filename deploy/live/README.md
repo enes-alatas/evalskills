@@ -116,6 +116,9 @@ and control characters are removed, lines are cut to 200 characters, and at most
 rest are counted and stay in `run.log`. SkillEvaluator prints a "still running" line every minute, so a terminal that
 stays silent for longer means something stalled. `TIER3_PROGRESS=0` turns this off.
 
+`systemctl start evalskills-docker-proxy` returns before the proxy listens. The pilot and `--cleanup` wait up to
+20 s for it to answer, and stop before any token if it doesn't (#264), so they can follow the start directly.
+
 ### Stopping a run (#259)
 
 - **Ctrl-C once:** the current run finishes and is recorded, and the pilot then stops. The rest of the plan isn't
