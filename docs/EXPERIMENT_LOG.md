@@ -306,3 +306,20 @@
 - -> `read_lift` reads the real layout, and a run SkillEvaluator calls never-activated, with both arms succeeded, is
   recorded `inconclusive` with no score (#265). For the pilot, whether the agent loads a skill at all is the first
   thing a smoke run now shows, before any full run spends budget on it.
+
+## E18 — smoke runs of the other nine pilot skills (2026-11-27, #121, #268)
+- Setup as E17, on main `5362a24`. There was one smoke run per skill, in turn, each on its first case with both arms,
+  and all with open egress. No record has a score.
+- **The 7 skills that run on their own cases never started.** pdf, xlsx, code-review-and-quality,
+  requesting-code-review, frontend-design, react-best-practices and frontend-ui-engineering ship no `evals/`. The
+  runner called `skillevaluator tier3 evaluate` without `--autopilot`, so SkillEvaluator wrote no starter case and
+  stopped at configuration ("No evaluator source directory found"). Each took under 10 s, with no model call, and
+  was recorded `failed`. ADR-0006 and METHODOLOGY already promised a starter case, and the runner didn't ask for it.
+- **test-driven-development** was graded and recorded `inconclusive`: in SkillEvaluator's words, the skill never
+  activated. So far that's 2 of the 2 QuixBugs skills graded, systematic-debugging included (E17). Whether the skill
+  reaches the agent's container is being checked before any reading of it.
+- **debugging-and-error-recovery** failed. The with-skill agent exited with EPIPE (a broken pipe), as 2 of run 11's
+  trials did (E15), and the baseline hit SkillEvaluator's 300 s agent timeout.
+- -> The runner now always passes `--autopilot`, which reuses an existing source unchanged (#268). A skill without
+  cases runs on SkillEvaluator's one model-written starter case, and METHODOLOGY says how that reads. It costs one
+  extra model call per such skill.

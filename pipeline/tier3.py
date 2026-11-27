@@ -404,6 +404,9 @@ def command(skill_dir: Path, out: Path, repo: str, commit: str) -> list[str]:
         # deletes them at the end of the run, and a grade that wrote no reward can't be diagnosed (#254). They go
         # into the private report with the rest (copy_report), and like it are never committed.
         "--harbor-keep-jobs",
+        # A skill that ships no cases runs on the one starter case SkillEvaluator writes (ADR-0006, labelled starter by
+        # cases_label). The expert command writes it only with this flag; an existing source is reused unchanged (#268).
+        "--autopilot",
     ] + (["--agent-model", f"{AGENT}=openai/{AGENT_MODEL}"] if AGENT_MODEL else [])
 
 
