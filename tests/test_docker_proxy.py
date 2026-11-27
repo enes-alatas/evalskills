@@ -531,12 +531,21 @@ def test_a_second_request_on_the_same_connection_is_never_forwarded(env):
     assert env["daemon"].seen[0][2]["connection"] == "close"
 
 
-def test_chunked_archive_upload_is_re_framed_and_stops_at_the_end(env):
-    head = b"PUT /v1.47/containers/mine/archive?path=/x HTTP/1.1\r\nHost: d\r\nTransfer-Encoding: chunked\r\n\r\n"
-    body = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
-    out = raw(env, head + body + b"GET /info HTTP/1.1\r\n\r\n")
-    assert out.startswith(b"HTTP/1.1 200")
-    assert [(m, b) for m, _, _, b in env["daemon"].seen] == [("PUT", b"hello world")]
+@pytest.mark.parametrize("framing", [b"Transfer-Encoding: chunked", b"Content-Length: 11"])
+def test_copying_into_a_container_is_refused_so_harbor_uploads_from_inside(env, framing):
+    """#262: under runsc's rootfs overlay a docker cp lands beneath what the sandbox sees. Refused, Harbor falls back
+    to exec + tar inside the container. Nothing reaches the daemon, not even for the proxy's own container."""
+    head = b"PUT /v1.47/containers/mine/archive?path=/tests HTTP/1.1\r\nHost: d\r\n" + framing + b"\r\n\r\n"
+    body = b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n" if b"chunked" in framing else b"hello world"
+    assert raw(env, head + body).startswith(b"HTTP/1.1 403")
+    assert env["daemon"].seen == []
+
+
+def test_copying_out_of_a_container_still_works(env):
+    assert raw(env, b"GET /v1.47/containers/mine/archive?path=/logs HTTP/1.1\r\nHost: d\r\n\r\n").startswith(
+        b"HTTP/1.1 200"
+    )
+    assert [m for m, *_ in env["daemon"].seen] == ["GET"]
 
 
 @pytest.mark.parametrize(
