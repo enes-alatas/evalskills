@@ -323,3 +323,20 @@
 - -> The runner now always passes `--autopilot`, which reuses an existing source unchanged (#268). A skill without
   cases runs on SkillEvaluator's one model-written starter case, and METHODOLOGY says how that reads. It costs one
   extra model call per such skill.
+
+## E19 — the never-activated skill was installed and offered: the agent didn't call it (2026-11-27, #121)
+- Read-only check of opencode's own log (`opencode.log`) in all 26 QuixBugs systematic-debugging trials so far: three
+  pilot runs (two on 2026-11-26, plus E17's), 13 with the skill and 13 without. No run, no spend.
+- **The skill reached the agent.** In every with-skill trial, opencode loaded `systematic-debugging` at startup: it
+  found the same SKILL.md in `/root/.claude/skills`, `/root/.config/opencode/skills` and `/root/.agents/skills`, and
+  warned about the duplicates (harmless; it keeps the first). Harbor moves only opencode's data and state folders,
+  not its config folder, so the install path is the one opencode reads.
+- **The baseline stayed clean.** None of the 13 baseline trials logged any skill.
+- **The agent never used it.** In E17's with-skill trial, the one whose tool calls were read, the agent
+  (nemotron-3.5-super through the gateway) called only `bash`, `read`, `edit` and `write`, never opencode's `skill`
+  tool.
+- The log shows the skill was discovered, not the exact tool list the model was sent. The test-driven-development
+  trials (E18) weren't in this read.
+- -> For systematic-debugging, "never activated" is how that agent and model used the skill, not a pipeline bug.
+  No code change. The
+  run stays `inconclusive` with no score (E17), and METHODOLOGY now says what that status means.

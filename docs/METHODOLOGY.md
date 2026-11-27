@@ -54,8 +54,11 @@ embeddings on it. It backs one internal pilot (#121), which we run on ten skills
 (scores, lift, spread between runs, runtime, requests, tokens) may be published, labelled as the pilot's. Agent
 transcripts, raw reports and per-case judge verdicts stay private, and on the host only root can read them (#256). A
 smoke run (one case, one run, marked `smoke`) only checks that the pipeline works before a full run, and is never
-reported as a result. A pilot run whose skill the agent never loaded is `inconclusive`, with no score, as
-SkillEvaluator itself judges it: both arms ran and were graded, but there is no lift to measure (#265, E17).
+reported as a result. A pilot run whose skill the agent never activated is `inconclusive`, with no score, as
+SkillEvaluator itself judges it: both arms ran and were graded, but there is no lift to measure (#265, E17). For
+systematic-debugging with this agent and model, the skill was installed and loaded but never called (E19). So there
+the status describes how the agent used the skill, not a pipeline fault. Another never-activated run is read the same
+way only once its own install has been checked.
 
 From 2026-11-20 (#236), the pilot's trials have open web access. The agent and the skill could reach any public
 site, including published solutions to the pilot's cases: QuixBugs' fixed programs are public. Until a pilot result
