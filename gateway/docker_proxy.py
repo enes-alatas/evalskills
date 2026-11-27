@@ -9,7 +9,7 @@ it gets this proxy's socket, and the proxy (root) forwards only what a SkillEval
   accepted). No privileged containers or execs, no added capabilities, devices, host namespaces, sysctls, unmasked
   paths, security-option overrides or published ports.
 - **Own objects only.** Everything the proxy creates gets the owner label. Inspecting, starting, stopping, exec-ing
-  into, copying to and from, and deleting work only on objects that carry it; lists and events are filtered to it.
+  into, copying from, and deleting work only on objects that carry it; lists and events are filtered to it.
   Images must carry it too (GvisorEnvironment builds them with the label; the proxy itself refuses every build and
   pull, because Compose v2 builds through BuildKit's /session and /grpc, which a /build check would never see).
 - **Binds** come only from under one root (/srv/evals/run), at least two levels down (one fresh folder per trial).
@@ -728,7 +728,9 @@ ROUTES = [
     ("POST", C + r"/attach", "container", "hijack"),
     ("GET", C + r"/archive", "container", "pass"),
     ("HEAD", C + r"/archive", "container", "pass"),
-    ("PUT", C + r"/archive", "container", "stream"),
+    # PUT /archive (docker cp into a container) is refused (#262): under runsc's rootfs overlay a host-side copy is
+    # hidden beneath any folder the sandbox made itself, so Harbor's tests never showed up. Harbor then falls back to
+    # exec + tar inside the container, which the sandbox sees. One write path into trial containers fewer.
     ("POST", C + r"/exec", "container", "exec_create"),
     ("DELETE", C, "container", "pass"),
     ("GET", E + r"/json", "exec", "pass"),
@@ -903,14 +905,11 @@ def read_json_body(sock, buf, head) -> dict:
 PASS_HEADERS = {"content-type", "user-agent", "accept"}
 
 
-def upstream_head(method: str, target: str, head: Head, *, hijack: bool, length: int | None, chunked: bool) -> bytes:
+def upstream_head(method: str, target: str, head: Head, *, hijack: bool, length: int) -> bytes:
     lines = [f"{method} {target} HTTP/1.1", "Host: docker"]
     lines += [f"{k}: {v}" for k, v in head.headers if k.lower() in PASS_HEADERS]
     lines += ["Connection: Upgrade", "Upgrade: tcp"] if hijack else ["Connection: close"]
-    if length is not None:
-        lines.append(f"Content-Length: {length}")
-    elif chunked:
-        lines.append("Transfer-Encoding: chunked")
+    lines.append(f"Content-Length: {length}")
     return ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1")
 
 
@@ -1036,7 +1035,7 @@ class Handler(socketserver.BaseRequestHandler):
             action = "pass"
         target = path + ("?" + query if query else "")
 
-        body, stream = None, False
+        body = None
         rewrite = {
             "container_create": self.policy.rewrite_container_create,
             "network_create": self.policy.rewrite_network_create,
@@ -1048,18 +1047,16 @@ class Handler(socketserver.BaseRequestHandler):
             doc = rewrite(read_json_body(client, buf, head))
             if action == "network_create":
                 try:
-                    return self.forward(client, buf, head, action, bare, target, json.dumps(doc).encode(), False)
+                    return self.forward(client, buf, head, action, bare, target, json.dumps(doc).encode())
                 finally:
                     self.policy.release_subnet(doc)
             body = json.dumps(doc).encode()
-        elif action == "stream":
-            stream = True
         elif action in ("pass", "filter", "hijack"):
             if head.get("content-length") not in (None, "0") or head.get("transfer-encoding"):
                 raise Refused("this route takes no body", 400)
-        self.forward(client, buf, head, action, bare, target, body, stream)
+        self.forward(client, buf, head, action, bare, target, body)
 
-    def forward(self, client, buf, head: Head, action: str, bare: str, target: str, body, stream: bool) -> None:
+    def forward(self, client, buf, head: Head, action: str, bare: str, target: str, body) -> None:
         hijack = action == "hijack" or (action == "exec_start" and not json.loads(body).get("Detach"))
 
         up = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1067,14 +1064,10 @@ class Handler(socketserver.BaseRequestHandler):
             up.settimeout(60)
             up.connect(self.cfg["upstream"])
             log("forward", method=head.method, route=shown_path(target.split("?", 1)[0]))
-            length = len(body) if body is not None else (None if stream else 0)
-            up.sendall(upstream_head(head.method, target, head, hijack=hijack, length=length, chunked=stream))
+            length = len(body) if body is not None else 0
+            up.sendall(upstream_head(head.method, target, head, hijack=hijack, length=length))
             if body:
                 up.sendall(body)
-            elif stream:
-                for piece in body_chunks(client, buf, head):
-                    up.sendall(b"%x\r\n%s\r\n" % (len(piece), piece))
-                up.sendall(b"0\r\n\r\n")
             client.settimeout(None)
             up.settimeout(None)
             if not hijack:

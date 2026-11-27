@@ -274,3 +274,19 @@
   lookups at teardown. `run.log` has no permission error either.
 - -> Pilot reports now keep Harbor's job folders (#254), and they stay private like the rest of `reports/`. The next
   one-skill run shows the grader's own error.
+
+## E16 — live pilot run 12: the grader's tests are hidden by gVisor's rootfs overlay (2026-11-26 to 2026-11-27, #121, #262)
+- Setup as E15, with Harbor's job folders kept (#254). Run 12 launched the skill's three repeats where one was meant
+  (`pilot/skills.tsv` lists it 3 times). Enes stopped it during repeat 2. That led to smoke runs (#257) and a clean stop
+  (#259). Repeat 1 ended like run 11: no trial got a reward, and the run is recorded `failed`, with no score.
+- **The grader never found its tests.** A kept trial's `verifier/test-stdout.txt` holds one line:
+  `bash: line 1: /tests/test.sh: No such file or directory`.
+- **Cause, reproduced on the host with no model spend.** runsc (release-20261109.0) runs with `overlay2=root:self`.
+  When a folder is made from inside the sandbox (`docker exec mkdir -p /tests`), a later `docker cp` into it is
+  hidden: it lands beneath the sandbox's own layer, so `/tests` looks empty from inside. Copied into a folder the
+  sandbox hasn't made, the file is visible. Harbor creates its mount targets with exec, then uploads the tests with
+  `docker compose cp`. Agent setup copies into fresh paths, which is why the agent worked. Bind mounts such as `/logs`
+  aren't affected (`file-access-mounts=shared`).
+- -> The socket proxy refuses `PUT /containers/{id}/archive` (#262; option B, Enes's choice over a second runsc runtime
+  with other overlay flags). Harbor's `upload_dir` and `upload_file` then fall back to `exec` + `tar -xf -` inside
+  the container, which the sandbox sees. Nothing on the daemon or in runsc changed. The next step is one smoke run.

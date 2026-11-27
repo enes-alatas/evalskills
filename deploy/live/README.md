@@ -104,6 +104,8 @@ logs or transcripts. Reports written before #256 are `0755`/`0644`; close them o
 `find reports -path 'reports/*/*-tier3-*' -type d -prune -exec chmod -R go-rwx {} +`.
 A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable
 cases as `inconclusive`, and one whose Dockerfile the proxy refuses as `unsupported`. None of them gets a score.
+The socket proxy refuses `docker cp` into a trial container: under runsc's rootfs overlay the copy can be hidden
+from the sandbox, so Harbor uploads with `exec` + `tar` inside the container instead (#262, E16).
 The report keeps Harbor's job folders (`--harbor-keep-jobs`, #254). When a trial ends without a reward, its grader's
 output is in `_harbor-jobs/<job>/<trial>/verifier/test-stdout.txt` under the report folder:
 `find reports/<skill>/<run> -path '*verifier*' -name 'test-std*'`.
