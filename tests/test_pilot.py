@@ -57,7 +57,7 @@ def test_bad_rows_are_refused(tmp_path, line):
 
 
 def lift_dir(tmp_path, data, agent="opencode"):
-    d = tmp_path / "out" / "20261112_000000" / agent
+    d = tmp_path / "out" / "demo" / "20261112_000000_1_abc" / agent  # <skill>/<run>/<agent>, as SkillEvaluator writes
     d.mkdir(parents=True)
     (d / "lift.json").write_text(json.dumps(data))
     return tmp_path / "out"
@@ -425,8 +425,8 @@ def test_leftover_containers_and_networks_are_removed_through_the_proxy(tmp_path
 def test_lift_is_never_read_through_a_link(tmp_path):
     (tmp_path / "real" / "opencode").mkdir(parents=True)
     (tmp_path / "real" / "opencode" / "lift.json").write_text('{"execution_status": "succeeded"}')
-    (tmp_path / "out").mkdir()
-    (tmp_path / "out" / "x").symlink_to(tmp_path / "real")
+    (tmp_path / "out" / "demo").mkdir(parents=True)
+    (tmp_path / "out" / "demo" / "x").symlink_to(tmp_path / "real")
     assert pilot.read_lift(tmp_path / "out") == {}
 
 
@@ -708,3 +708,64 @@ def test_a_ctrl_c_meant_for_the_pilot_never_reaches_a_git_call(monkeypatch):
 
     monkeypatch.setattr(ev.subprocess, "run", fake)
     assert ev.sh(["git", "status"]) == "ok" and seen["start_new_session"] is True
+
+
+def summaries(tmp_path, activation="never_activated", with_status="succeeded", without_status="succeeded"):
+    agent = tmp_path / "out" / "systematic-debugging" / "20261127_160355_2435509_d0b537eb7bc8" / "opencode"
+    for arm, status in (("with-skill", with_status), ("without-skill", without_status)):
+        (agent / arm).mkdir(parents=True)
+        doc = {"execution_status": status, "overall_score": 0.68}
+        if arm == "with-skill":
+            doc["skill_activation"] = {"status": activation, "positive_trials": 1, "activated_trials": 0}
+        (agent / arm / "summary.json").write_text(json.dumps(doc))
+    return tmp_path / "out"
+
+
+def test_a_graded_run_whose_skill_never_activated_is_inconclusive_not_failed(tmp_path):
+    """#265: SkillEvaluator writes no lift.json when the agent never loads the skill. That run ran and was graded:
+    inconclusive, in SkillEvaluator's words, and still no score."""
+    out = summaries(tmp_path)
+    assert pilot.read_lift(out) == {} and pilot.never_activated(out) is True
+    status, reason = pilot.status_of(0, {}, skill_never_activated=True)
+    assert status == "inconclusive" and "never activated" in reason
+    res = {
+        "exit": 0,
+        "cases": "shared",
+        "out": ev.ROOT / "reports" / "x",
+        "commit": "c" * 40,
+        "tree_digest": "d",
+        "duration_s": 1.0,
+        "never_activated": True,
+    }
+    row = {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": "quixbugs-python"}
+    rec = pilot.record(row, 1, "smoke-x", res, {}, None, "t", {"version": "v"}, egress="open", smoke=True)
+    assert rec["status"] == "inconclusive" and rec["scores"] is None
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"activation": "activated"},
+        {"activation": "unknown"},
+        {"with_status": "failed"},
+        {"without_status": "failed"},
+    ],
+)
+def test_anything_short_of_a_clean_never_activated_verdict_stays_failed(tmp_path, kw):
+    out = summaries(tmp_path, **kw)
+    assert pilot.never_activated(out) is False
+    assert pilot.status_of(0, {}, skill_never_activated=False)[0] == "failed"
+
+
+def test_a_crashed_or_stopped_run_is_never_called_inconclusive(tmp_path):
+    assert pilot.status_of(None, {}, stopped="timed out after 1 s", skill_never_activated=True)[0] == "failed"
+    assert pilot.status_of(1, {}, skill_never_activated=True)[0] == "failed"
+
+
+def test_the_activation_verdict_is_never_read_through_a_link(tmp_path):
+    real = summaries(tmp_path / "real")
+    (tmp_path / "out" / "systematic-debugging").mkdir(parents=True)
+    (tmp_path / "out" / "systematic-debugging" / "run").symlink_to(
+        real / "systematic-debugging" / "20261127_160355_2435509_d0b537eb7bc8"
+    )
+    assert pilot.never_activated(tmp_path / "out") is False
