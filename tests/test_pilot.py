@@ -293,7 +293,7 @@ def test_a_trial_runs_in_a_fresh_folder_and_root_copies_only_plain_files_out(tri
     assert out.is_relative_to(trial["reports"]) and res["exit"] == 0 and res["unsupported"] is False
     assert (out / "_harbor-jobs" / "t" / "real.txt").read_text() == "real\n"
     assert not any(p.is_symlink() for p in out.rglob("*"))
-    assert oct((out / "suid").stat().st_mode & 0o7777) == "0o644"  # never a setuid file in reports/
+    assert oct((out / "suid").stat().st_mode & 0o7777) == "0o600"  # never a setuid file, root-only (#256)
     skipped = {d["path"]: d["why"] for d in json.loads((out / "skipped.json").read_text())}
     assert skipped == {"_harbor-jobs/planted": "link", "_harbor-jobs/dirlink": "link", "_harbor-jobs/fifo": "fifo"}
     assert "hello from the trial" in (out / "run.log").read_text()

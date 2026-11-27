@@ -99,6 +99,9 @@ python3 -I pipeline/live_pilot.py --dry-run          # the full plan: every case
 trial isolation broken, with a real provider key in its environment, or without a token. SkillEvaluator runs as the
 trial user (`TIER3_TRIAL_USER`, default `evals`) in a fresh folder under `TIER3_RUN_ROOT` (`/srv/evals/run`), and
 root copies the report's plain files to `reports/` when the trial ends (ADR-0003, amended 2026-11-13).
+The copy is root's alone: folders `0700`, files `0600` (#256), so no other user of the host can read the run's
+logs or transcripts. Reports written before #256 are `0755`/`0644`; close them once, as root, from `/opt/evalskills`:
+`find reports -path 'reports/*/*-tier3-*' -type d -prune -exec chmod -R go-rwx {} +`.
 A run that times out, writes no `lift.json` or doesn't succeed is recorded as `failed`, one with no comparable
 cases as `inconclusive`, and one whose Dockerfile the proxy refuses as `unsupported`. None of them gets a score.
 The report keeps Harbor's job folders (`--harbor-keep-jobs`, #254). When a trial ends without a reward, its grader's

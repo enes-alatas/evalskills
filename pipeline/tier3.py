@@ -484,19 +484,36 @@ _KINDS = {
 }
 
 
+REPORT_DIR_MODE, REPORT_FILE_MODE = 0o700, 0o600  # transcripts and logs stay private on the host (#256)
+RESERVED_REPORT_FILES = ("run.log", "cases.json", "skipped.json")  # root writes these at the top of the report
+
+
+def write_private(path: Path, text: str) -> None:
+    """A new report file only root can read: created 0600, never through a link, never over an existing file."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, REPORT_FILE_MODE)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+
+
 def copy_report(src: Path, dst: Path, max_bytes: int = MAX_REPORT_BYTES) -> list[dict]:
     """Copy the trial's results into a fresh folder root owns: folders and the bytes of regular files only, as
-    0755/0644, never following a link and never opening anything that would block. Everything else is skipped and
-    returned (#143 review: the trial user could write src, so nothing in it is trusted)."""
-    dst.mkdir(mode=0o755)
+    0700/0600 so only root can read it on the shared host (#256), never following a link and never opening anything
+    that would block. Everything else is skipped and returned (#143 review: the trial user could write src, so nothing
+    in it is trusted)."""
+    dst.mkdir(mode=REPORT_DIR_MODE)
     skipped, total = [], 0
     for top, dirs, files in os.walk(src):  # never descends through a link
         rel = Path(top).relative_to(src)
         for name in [*dirs, *files]:
             path = Path(top) / name
             st = os.lstat(path)
+            if rel == Path(".") and name in RESERVED_REPORT_FILES:  # of any kind: root writes its own there after
+                if name in dirs:
+                    dirs.remove(name)
+                skipped.append({"path": name, "why": "reserved for the pipeline's own record"})
+                continue
             if stat.S_ISDIR(st.st_mode):
-                (dst / rel / name).mkdir(mode=0o755)
+                (dst / rel / name).mkdir(mode=REPORT_DIR_MODE)
                 continue
             if name in dirs:
                 dirs.remove(name)
@@ -512,7 +529,7 @@ def copy_report(src: Path, dst: Path, max_bytes: int = MAX_REPORT_BYTES) -> list
                 if not stat.S_ISREG(os.fstat(fd).st_mode):  # swapped since lstat
                     skipped.append({"path": str(rel / name), "why": "changed while copying"})
                     continue
-                out = os.open(dst / rel / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+                out = os.open(dst / rel / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, REPORT_FILE_MODE)
                 with os.fdopen(out, "wb") as fout:
                     shutil.copyfileobj(fin, fout)
     return skipped
@@ -678,9 +695,9 @@ def run(
             unsupported = False
         out.parent.mkdir(parents=True, exist_ok=True)
         skipped = copy_report(results, out)
-        (out / "run.log").write_text(log)
-        (out / "cases.json").write_text(json.dumps({"cases": cases, "task_set": task_set}))
-        (out / "skipped.json").write_text(json.dumps(skipped, indent=1))
+        write_private(out / "run.log", log)
+        write_private(out / "cases.json", json.dumps({"cases": cases, "task_set": task_set}))
+        write_private(out / "skipped.json", json.dumps(skipped, indent=1))
         return {
             "exit": code,
             "stopped": why,
