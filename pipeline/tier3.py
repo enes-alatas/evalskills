@@ -136,7 +136,11 @@ def _can_connect(path: Path, user: pwd.struct_passwd) -> bool:
         return True
     try:
         p = subprocess.run(
-            [sys.executable, "-I", "-c", _CONNECT, str(path)], capture_output=True, timeout=15, **_as_user(user)
+            [sys.executable, "-I", "-c", _CONNECT, str(path)],
+            capture_output=True,
+            timeout=15,
+            start_new_session=True,  # a Ctrl-C meant for the pilot must not fail this probe (#259)
+            **_as_user(user),
         )
     except subprocess.TimeoutExpired:
         return True  # it didn't refuse: assume the worst
@@ -407,17 +411,23 @@ def stop_trial(p: subprocess.Popen, uid: int) -> None:
     p.wait()
     if os.geteuid() != 0:
         return
+    if not kill_trial_user(uid):
+        raise Unsafe(f"refusing to go on: processes of uid {uid} survived SIGKILL; the trial folder is left in place")
+
+
+def kill_trial_user(uid: int, proc: Path = Path("/proc")) -> bool:
+    """SIGKILL every process of the trial user, for up to 5 s. → True once none is left."""
     for _ in range(50):
-        left = _trial_pids(uid)
+        left = _trial_pids(uid, proc)
         if not left:
-            return
+            return True
         for pid in left:
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
         time.sleep(0.1)
-    raise Unsafe(f"refusing to go on: processes of uid {uid} survived SIGKILL; the trial folder is left in place")
+    return not _trial_pids(uid, proc)
 
 
 TRIAL_IMAGE_TAG = re.compile(r"evalskills-trial:[0-9a-f]{16}\Z")  # what the proxy's builder tags (docker_build.py)
@@ -609,8 +619,14 @@ def _pump(progress: "_Progress | None", final: bool = False) -> "_Progress | Non
         return None
 
 
-def _wait(p: subprocess.Popen, log_f, started: float, progress=None) -> tuple[int | None, str | None]:
-    """Wait for the trial within its time and log caps. → (exit code, or None when stopped; why it was stopped)."""
+STOPPED_BY_OPERATOR = "stopped by the operator"
+
+
+def _wait(
+    p: subprocess.Popen, log_f, started: float, progress=None, should_stop=lambda: False
+) -> tuple[int | None, str | None]:
+    """Wait for the trial within its time and log caps, or until the operator stops it (#259). → (exit code, or None
+    when stopped; why it was stopped)."""
     while True:
         progress = _pump(progress)
         try:
@@ -623,6 +639,8 @@ def _wait(p: subprocess.Popen, log_f, started: float, progress=None) -> tuple[in
             return None, f"timed out after {TIER3_TIMEOUT} s"
         if os.fstat(log_f.fileno()).st_size > MAX_LOG_BYTES:
             return None, f"stopped: its output passed {MAX_LOG_BYTES} bytes"
+        if should_stop():
+            return None, STOPPED_BY_OPERATOR
 
 
 def run(
@@ -636,6 +654,7 @@ def run(
     label: str | None = None,
     progress_out=None,
     max_cases: int | None = None,
+    should_stop=lambda: False,
 ) -> dict:
     """One live evaluation. Returns its exit code, cases, report dir, commit and tree digest; never a score.
 
@@ -677,7 +696,8 @@ def run(
                 preexec_fn=_limit_files,  # the pilot is single-threaded
                 **_as_user(user),
             )
-            code, why = _wait(p, log_f, started, progress_for(log_f, label or Path(skill_path).name, progress_out))
+            progress = progress_for(log_f, label or Path(skill_path).name, progress_out)
+            code, why = _wait(p, log_f, started, progress, should_stop)
             duration = round(time.monotonic() - started, 1)
             keep = True  # until stop_trial returns, nothing of the trial is touched
             stop_trial(p, user.pw_uid)

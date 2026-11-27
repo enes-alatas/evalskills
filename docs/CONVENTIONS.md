@@ -49,6 +49,8 @@ answers (#257).
   result moves us forward and what result means stop.
 - **Host steps one at a time.** An operator runs one command per message, each with the output that shows it worked.
   Anything over a few minutes runs in `tmux`. A long run is never left in a session that a dropped connection ends.
+- **Stop a run with Ctrl-C, never `kill -9`.** Once to stop after the current run, twice to stop it now. After a hard
+  kill, `live_pilot.py --cleanup` comes before anything else on the host (deploy/live/README.md, #259).
 
 ## Issues
 - Every issue has exactly one type label: `bug`, `new feature`, `improvement`, `chore`, `documentation`,

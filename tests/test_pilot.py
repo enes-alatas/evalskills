@@ -259,11 +259,12 @@ def trial(tmp_path, monkeypatch):
     monkeypatch.setattr(tier3, "MIN_FREE_ROOT", 0)  # a CI runner's / may hold less than the host's minimum
     monkeypatch.setattr(tier3, "command", lambda sk, res, *_: ["sh", "-c", TRIAL, "sh", str(res), str(sk), str(seen)])
 
-    def go(nap="0", mark="", timeout=60):
+    def go(nap="0", mark="", timeout=60, should_stop=lambda: False):
         monkeypatch.setattr(tier3, "TIER3_TIMEOUT", timeout)
         removed = []
         env = {"PATH": os.environ["PATH"], "NAP": nap, "MARK": mark}
-        res = tier3.run("a/b", "skills/demo", None, env, run_root=run_root, cleanup=lambda: removed.append(1) or [])
+        clean = lambda: removed.append(1) or []  # noqa: E731
+        res = tier3.run("a/b", "skills/demo", None, env, run_root=run_root, cleanup=clean, should_stop=should_stop)
         return res, removed
 
     return {"go": go, "run_root": run_root, "seen": seen, "reports": tmp_path / "reports"}
@@ -523,7 +524,7 @@ def test_an_unreadable_egress_config_stops_the_pilot_before_any_token(tmp_path, 
     assert issued == [] and not (tmp_path / "results.jsonl").exists()
 
 
-def smoke_pilot(tmp_path, monkeypatch, argv, refuse=False):
+def smoke_pilot(tmp_path, monkeypatch, argv, refuse=False, during=None, code=0):
     """pilot.main with everything outside it faked; returns the tier3.run calls and the records written."""
     rows = [
         {"repo": "a/b", "skill_path": "s", "category": "c", "task_set": "quixbugs-python", "repeats": 3},
@@ -540,15 +541,17 @@ def smoke_pilot(tmp_path, monkeypatch, argv, refuse=False):
     monkeypatch.setattr(tier3, "trial_env", lambda env: env)
     calls = []
 
-    def fake_run(repo, skill_path, task_set, env, label=None, max_cases=None):
-        calls.append({"repo": repo, "label": label, "max_cases": max_cases})
+    def fake_run(repo, skill_path, task_set, env, label=None, max_cases=None, should_stop=lambda: False):
+        if during:
+            during(len(calls))
+        calls.append({"repo": repo, "label": label, "max_cases": max_cases, "stop_now": should_stop()})
         if refuse:
             raise tier3.NoSmokeCase("smoke: can't take one case from evals.jsonl")
         out = pilot.ev.ROOT / "reports" / "x"
         return {"exit": 1, "cases": "shared", "out": out, "commit": "c" * 40, "tree_digest": "d", "duration_s": 1.0}
 
     monkeypatch.setattr(tier3, "run", fake_run)
-    assert pilot.main(argv) == 0
+    assert pilot.main(argv) == code
     recs = [json.loads(line) for line in (tmp_path / "results.jsonl").read_text().splitlines()]
     return calls, recs
 
@@ -584,3 +587,124 @@ def test_a_smoke_run_that_cant_cut_the_cases_is_recorded_failed_not_widened(tmp_
     for r in recs:
         assert r["status"] == "failed" and r["scores"] is None and r["smoke"] is True
         assert r["reason"].startswith("NoSmokeCase: smoke: can't take one case")
+
+
+def test_a_trial_the_operator_stops_is_contained_and_recorded_failed(trial):
+    """#259: a second Ctrl-C or SIGTERM ends the trial like a timeout does, never with a score."""
+    res, removed = trial["go"](nap="30", should_stop=lambda: True)
+    assert res["exit"] is None and res["stopped"] == tier3.STOPPED_BY_OPERATOR and res["duration_s"] < 10
+    assert gone(int((trial["seen"] / "grandchild").read_text()))
+    assert removed == [1] and list(trial["run_root"].iterdir()) == []
+    assert (res["out"] / "run.log").read_text().startswith("stopped by the operator")
+    assert pilot.status_of(res["exit"], {}, stopped=res["stopped"]) == ("failed", "stopped by the operator")
+
+
+def test_one_ctrl_c_finishes_the_current_run_and_starts_no_other(tmp_path, monkeypatch, capsys):
+    import signal
+
+    before = signal.getsignal(signal.SIGINT)
+    calls, recs = smoke_pilot(
+        tmp_path, monkeypatch, [], during=lambda n: n == 1 and os.kill(os.getpid(), signal.SIGINT), code=130
+    )
+    assert len(calls) == 2 and len(recs) == 2  # the second run finished and was recorded; runs 3 and 4 never began
+    assert not any(c["stop_now"] for c in calls)
+    assert "2 run(s) not started" in capsys.readouterr().err
+    assert signal.getsignal(signal.SIGINT) is before  # the pilot's handler is gone with it
+
+
+@pytest.mark.parametrize("signals", [["SIGINT", "SIGINT"], ["SIGTERM"]])
+def test_a_second_ctrl_c_or_sigterm_stops_the_current_trial_now(tmp_path, monkeypatch, signals):
+    import signal
+
+    def send(n):
+        if n == 0:
+            for name in signals:
+                os.kill(os.getpid(), getattr(signal, name))
+
+    calls, recs = smoke_pilot(tmp_path, monkeypatch, [], during=send, code=130)
+    assert len(calls) == 1 and calls[0]["stop_now"] is True and len(recs) == 1
+
+
+def test_a_pilot_is_refused_while_another_holds_the_lock(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "pilot" / "results.jsonl")
+    monkeypatch.setattr(pilot, "load_skills", lambda: [{"repo": "a/b", "skill_path": "s", "repeats": 1}])
+    monkeypatch.setattr(tier3, "evaluator_version", lambda: {"version": "x", "commit": "y"})
+    held = pilot.take_lock()
+    try:
+        assert pilot.main([]) == 2 and "holds the lock" in capsys.readouterr().err
+        monkeypatch.setattr(pilot.os, "geteuid", lambda: 0)
+        assert pilot.main(["--cleanup"]) == 2 and "cleanup refused" in capsys.readouterr().err
+    finally:
+        os.close(held)
+
+
+def as_root_cleanup(tmp_path, monkeypatch):
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "pilot" / "results.jsonl")
+    monkeypatch.setattr(pilot.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(tier3, "TRIAL_USER", pwd.getpwuid(os.getuid()).pw_name)
+    monkeypatch.setattr(tier3, "kill_trial_user", lambda uid: True)
+    monkeypatch.setattr(tier3, "remove_trial_objects", lambda: [])
+    monkeypatch.setattr(pilot, "gateway", lambda *a, **k: subprocess.CompletedProcess(a, 0, "[]", ""))
+
+
+def test_cleanup_is_root_only(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(pilot, "RECORDS", tmp_path / "pilot" / "results.jsonl")
+    monkeypatch.setattr(pilot.os, "geteuid", lambda: 1000)
+    (tmp_path / "run" / "t3-a").mkdir(parents=True)
+    assert pilot.cleanup(tmp_path / "run") == 2 and "as root" in capsys.readouterr().err
+    assert (tmp_path / "run" / "t3-a").is_dir()
+
+
+def test_a_run_folder_cleanup_cannot_remove_is_reported_not_a_traceback(tmp_path, monkeypatch, capsys):
+    as_root_cleanup(tmp_path, monkeypatch)
+    (tmp_path / "run" / "t3-a").mkdir(parents=True)
+
+    def busy(path, *a, **k):
+        raise OSError(16, "busy")
+
+    monkeypatch.setattr(pilot.shutil, "rmtree", busy)
+    assert pilot.cleanup(tmp_path / "run") == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out["problems"] == ["run folder t3-a not removed (OSError)"] and out["run_folders_removed"] == 0
+
+
+def test_cleanup_revokes_open_tokens_and_removes_only_real_run_folders(tmp_path, monkeypatch, capsys):
+    as_root_cleanup(tmp_path, monkeypatch)
+    run_root = tmp_path / "run"
+    (run_root / "t3-a" / "results").mkdir(parents=True)
+    (tmp_path / "keep").mkdir()
+    (run_root / "t3-link").symlink_to(tmp_path / "keep")
+    (run_root / "other").mkdir()
+    rows = [{"run_id": "pilot-1", "revoked": 1}, {"run_id": "pilot-2", "revoked": 0}]
+    monkeypatch.setattr(pilot, "gateway", lambda *a, **k: subprocess.CompletedProcess(a, 0, json.dumps(rows), ""))
+    revoked = []
+    monkeypatch.setattr(pilot, "revoke", lambda run_id: revoked.append(run_id) or True)
+    assert pilot.cleanup(run_root) == 0
+    assert revoked == ["pilot-2"]
+    assert sorted(p.name for p in run_root.iterdir()) == ["other", "t3-link"] and (tmp_path / "keep").is_dir()
+    out = json.loads(capsys.readouterr().out)
+    assert out == {"tokens_revoked": ["pilot-2"], "run_folders_removed": 1, "problems": []}
+
+
+def test_cleanup_says_what_it_could_not_do(tmp_path, monkeypatch, capsys):
+    as_root_cleanup(tmp_path, monkeypatch)
+
+    def down(*a, **k):
+        raise subprocess.CalledProcessError(1, "docker")
+
+    monkeypatch.setattr(pilot, "gateway", down)
+    monkeypatch.setattr(tier3, "remove_trial_objects", lambda: ["network list"])
+    assert pilot.cleanup(tmp_path / "run") == 1
+    problems = json.loads(capsys.readouterr().out)["problems"]
+    assert any("socket proxy" in p for p in problems) and any("gateway" in p for p in problems)
+
+
+def test_a_ctrl_c_meant_for_the_pilot_never_reaches_a_git_call(monkeypatch):
+    seen = {}
+
+    def fake(cmd, **kw):
+        seen.update(kw)
+        return subprocess.CompletedProcess(cmd, 0, "ok", "")
+
+    monkeypatch.setattr(ev.subprocess, "run", fake)
+    assert ev.sh(["git", "status"]) == "ok" and seen["start_new_session"] is True
