@@ -156,15 +156,28 @@ def usage(run_id: str) -> dict | None:
     return {k: rows[0][k] for k in keep}
 
 
+# Where SkillEvaluator writes an agent's results under its --output (#265): <skill>/<run>/<agent>/. The CLI adds the
+# skill's name (cli.py) and the runner a run folder (runner._reserve_run_dir), at the pinned d136a597.
+AGENT_DIRS = "*/*/*"
+
+
+def _read_json(path: Path, out: Path):
+    """A JSON file under out, never read through a link (tier3.copy_report keeps none). None when absent or bad."""
+    rel = path.relative_to(out)
+    if any((out / Path(*rel.parts[: i + 1])).is_symlink() for i in range(len(rel.parts))):
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
 def read_lift(out: Path) -> dict:
     """What SkillEvaluator wrote: execution status and the overall arm scores and lift, per agent. Nothing derived."""
     found = {}
-    for lift in sorted(out.glob("*/*/lift.json")):
-        if any(q.is_symlink() for q in (lift, lift.parent, lift.parent.parent)):
-            continue  # tier3.copy_report keeps no links; never read through one
-        try:
-            data = json.loads(lift.read_text())
-        except (OSError, ValueError):
+    for lift in sorted(out.glob(f"{AGENT_DIRS}/lift.json")):
+        data = _read_json(lift, out)
+        if not isinstance(data, dict):
             continue
         overall = (data.get("lift") or {}).get("overall") or {}
         found[lift.parent.name] = {
@@ -176,14 +189,37 @@ def read_lift(out: Path) -> dict:
     return found
 
 
+def never_activated(out: Path) -> bool:
+    """SkillEvaluator's own verdict that the agent never loaded the skill (#265). It then writes no lift.json, though
+    both arms ran and were graded. True only when one agent's with-skill summary says so and both arms succeeded."""
+    for agent in sorted(p for p in out.glob(AGENT_DIRS) if p.is_dir()):
+        arms = [_read_json(agent / arm / "summary.json", out) for arm in ("with-skill", "without-skill")]
+        if not all(isinstance(a, dict) for a in arms):
+            continue
+        activation = arms[0].get("skill_activation")
+        if (
+            isinstance(activation, dict)
+            and activation.get("status") == "never_activated"
+            and all(a.get("execution_status") == "succeeded" for a in arms)
+        ):
+            return True
+    return False
+
+
 def status_of(
-    exit_code: int | None, lift: dict, unsupported: bool = False, stopped: str | None = None
+    exit_code: int | None,
+    lift: dict,
+    unsupported: bool = False,
+    stopped: str | None = None,
+    skill_never_activated: bool = False,
 ) -> tuple[str, str | None]:
     """completed only when SkillEvaluator says the run succeeded and reports a lift; never a zero for a gap."""
     if unsupported and not lift:
         return "unsupported", "needs a custom environment or dependencies (its Dockerfile is not on the allowlist)"
     if exit_code is None:
         return "failed", stopped or "timed out"
+    if not lift and exit_code == 0 and skill_never_activated:
+        return "inconclusive", "skill never activated (SkillEvaluator's verdict); no lift to measure"
     if not lift:
         return "failed", f"no lift.json (exit {exit_code})"
     agent = next(iter(lift.values()))
@@ -207,7 +243,9 @@ def record(
     egress: str,
     smoke: bool = False,
 ) -> dict:
-    status, reason = status_of(res["exit"], lift, res.get("unsupported", False), res.get("stopped"))
+    status, reason = status_of(
+        res["exit"], lift, res.get("unsupported", False), res.get("stopped"), res.get("never_activated", False)
+    )
     agent = next(iter(lift.values()), {})
     return {
         "id": run_id,
@@ -437,6 +475,7 @@ def _run_plan(plan: list, smoke: bool, max_cases: int | None, evaluator: dict, s
             rec = crashed(row, i, run_id, crash, usage(run_id), started, evaluator, egress=egress, smoke=smoke)
         else:
             lift = read_lift(res["out"])
+            res["never_activated"] = never_activated(res["out"])
             rec = record(row, i, run_id, res, lift, usage(run_id), started, evaluator, egress=egress, smoke=smoke)
         rec["token_revoked"] = revoked
         with RECORDS.open("a") as f:

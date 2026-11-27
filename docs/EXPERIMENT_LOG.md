@@ -290,3 +290,19 @@
 - -> The socket proxy refuses `PUT /containers/{id}/archive` (#262; option B, Enes's choice over a second runsc runtime
   with other overlay flags). Harbor's `upload_dir` and `upload_file` then fall back to `exec` + `tar -xf -` inside
   the container, which the sandbox sees. Nothing on the daemon or in runsc changed. The next step is one smoke run.
+
+## E17 — first graded smoke run: the skill never activated, and the record said failed (2026-11-27, #121, #265)
+- Setup as E16, on main `52ab0df`, with the socket proxy refusing `docker cp` into trial containers (#262). One smoke
+  run of `obra/superpowers` systematic-debugging on its first QuixBugs case (`find_first_in_sorted`), both arms.
+- **Grading works.** Both trials' verifiers ran their tests, so Harbor's tar fallback works through the proxy and
+  under runsc. In both arms the agent fixed the bug (1/1). SkillEvaluator's quality scores were 0.68 with the skill
+  and 1.00 without, but its verdict was **inconclusive: the skill never activated** in the with-skill trial. Those
+  arm scores are diagnostic only, and no lift is shown or derived from them.
+- **The record misread it.** SkillEvaluator writes no `lift.json` for a never-activated skill, and `live_pilot`
+  mapped any missing `lift.json` to `failed`. Reading the code also showed that `read_lift` looked one folder too
+  shallow (`*/*/lift.json`). SkillEvaluator writes `<skill>/<run>/<agent>/lift.json` under `--output`, so even a
+  completed pilot run would have been recorded `failed`. No pilot run had completed yet, so no record was affected
+  beyond this one.
+- -> `read_lift` reads the real layout, and a run SkillEvaluator calls never-activated, with both arms succeeded, is
+  recorded `inconclusive` with no score (#265). For the pilot, whether the agent loads a skill at all is the first
+  thing a smoke run now shows, before any full run spends budget on it.
