@@ -294,3 +294,43 @@ def test_a_full_run_leaves_any_case_file_as_published(tmp_path):
     (src / "evals" / "evals.json").write_text("not json")
     out = tier3.prepare(src, None, tmp_path / "out" / "demo")
     assert (out / "evals" / "evals.json").read_text() == "not json"
+
+
+def test_a_copied_report_is_readable_by_its_owner_only(tmp_path):
+    src = tmp_path / "results"
+    (src / "job" / "trial").mkdir(parents=True)
+    (src / "lift.json").write_text("{}")
+    (src / "job" / "trial" / "trajectory.json").write_text("[]")
+    out = tmp_path / "out"
+    assert tier3.copy_report(src, out) == []
+    for d in (out, out / "job", out / "job" / "trial"):
+        assert d.stat().st_mode & 0o777 == 0o700
+    for f in (out / "lift.json", out / "job" / "trial" / "trajectory.json"):
+        assert f.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_report_file_is_written_private_and_never_over_a_link(tmp_path):
+    tier3.write_private(tmp_path / "run.log", "log")
+    assert (tmp_path / "run.log").stat().st_mode & 0o777 == 0o600
+    (tmp_path / "elsewhere").write_text("x")
+    (tmp_path / "cases.json").symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(FileExistsError):
+        tier3.write_private(tmp_path / "cases.json", "{}")
+    assert (tmp_path / "elsewhere").read_text() == "x"
+
+
+def test_a_copied_report_leaves_the_pipelines_own_record_names_to_root(tmp_path):
+    src = tmp_path / "results"
+    src.mkdir()
+    (src / "run.log").write_text("forged")
+    (src / "cases.json").mkdir()
+    (src / "cases.json" / "x").write_text("x")
+    (src / "nested").mkdir()
+    (src / "nested" / "skipped.json").write_text("[]")
+    out = tmp_path / "out"
+    skipped = tier3.copy_report(src, out)
+    assert sorted(s["path"] for s in skipped) == ["cases.json", "run.log"]
+    assert not (out / "run.log").exists() and not (out / "cases.json").exists()
+    assert (out / "nested" / "skipped.json").is_file()  # only the top of the report is reserved
+    tier3.write_private(out / "run.log", "log")
+    tier3.write_private(out / "cases.json", "{}")
