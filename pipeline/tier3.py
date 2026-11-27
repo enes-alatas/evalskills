@@ -75,6 +75,27 @@ class _Unix(http.client.HTTPConnection):
         self.sock.connect(self._path)
 
 
+PROXY_WAIT_S = 20  # systemctl start returns before the proxy listens (Type=simple, #264)
+
+
+def wait_for_proxy(sock: str = EVALS_SOCKET, timeout: float = PROXY_WAIT_S, poll: float = 0.5) -> bool:
+    """True once the proxy answers GET /_ping with 200, within timeout seconds."""
+    deadline = time.monotonic() + timeout
+    while True:
+        conn = _Unix(sock.removeprefix("unix://"))
+        try:
+            conn.request("GET", "/_ping", headers={"Host": "docker"})
+            if conn.getresponse().status == 200:
+                return True
+        except OSError:
+            pass
+        finally:
+            conn.close()
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+
 def isolation_ok(sock: str = EVALS_SOCKET) -> tuple[bool, str]:
     """Ask the proxy whether trial isolation holds (its networks' flags, the services' ip_forward and networks)."""
     conn = _Unix(sock.removeprefix("unix://"))

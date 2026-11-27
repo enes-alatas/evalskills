@@ -365,9 +365,12 @@ def _cleanup(run_root: Path) -> int:
     stopped = tier3.kill_trial_user(pwd.getpwnam(tier3.TRIAL_USER).pw_uid)
     if not stopped:
         problems.append(f"processes of {tier3.TRIAL_USER} survived SIGKILL; run folders left in place")
-    left = tier3.remove_trial_objects()
-    if left:
-        problems.append(f"not removed: {', '.join(left)} (is the socket proxy up? deploy/live/README.md)")
+    if not tier3.wait_for_proxy():
+        problems.append(f"the socket proxy didn't answer in {tier3.PROXY_WAIT_S} s; trial objects not removed")
+    else:
+        left = tier3.remove_trial_objects()
+        if left:
+            problems.append(f"not removed: {', '.join(left)} (is the socket proxy up? deploy/live/README.md)")
     try:
         rows = json.loads(gateway("usage", "--config", GATEWAY_CONFIG).stdout)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ValueError):
@@ -416,6 +419,11 @@ def main(argv: list[str]) -> int:
     lock = take_lock()
     if lock is None:
         print("pilot stopped: another pilot or --cleanup is running (it holds the lock)", file=sys.stderr)
+        return 2
+    if not tier3.wait_for_proxy():  # before any token: a proxy still starting must not fail the first run (#264)
+        print(f"pilot stopped: the socket proxy didn't answer in {tier3.PROXY_WAIT_S} s", file=sys.stderr)
+        print("Start it: systemctl start evalskills-docker-proxy (deploy/live/README.md).", file=sys.stderr)
+        os.close(lock)
         return 2
     stop = Stop()
     before = {sig: signal.signal(sig, stop.handle) for sig in (signal.SIGINT, signal.SIGTERM)}
